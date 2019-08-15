@@ -10,7 +10,7 @@ such as openssl. It is a replacement for and an enhancement to easy-rsa
 * All data strored in the database is encrypted with keys derived from a user
   supplied CA passphrase.
 * The certificates and keys are opinionated:
-   * secp256p EC certificate private keys
+   * Secp256k1 EC certificate private keys
    * "SSL-Server" attribute set on server certificates (nsCertType)
    * "SSL-Client" attribute set on client certificates (nsCertType)
    * ECDSA with SHA512 is used as the signature algorithm
@@ -105,13 +105,15 @@ Organization Unit Name etc. See `init --help` for additional details.
 The default lifetime of the CA is 5 years; you can change this via
 the `-V` (`--validity`) option to "init".
 
-### Create an OpenVPN server certificate
+### Create an OpenVPN server certificate & key pair
 An OpenVPN server needs a few things:
 * A server common name - so client can either address it by DNS Name.
 * An IP Address - so that the server config can use it to listen on
   an IP:Port.
 * The IP Address has the additional benefit (or drawback) of not
-  requiring the client to a DNS lookup.
+  requiring the client to do a DNS lookup.
+
+Creating a new server certificate/key pair:
 
     $ ovpn-tool -v foo.db server -i IP.ADDR.ES server.domain.name
 
@@ -131,7 +133,7 @@ You can of course create as many server certificates as needed. But,
 when you export a *client* configuration, you must select the correct
 server name this client will connect to. See example below.
 
-### Create an OpenVPN client (user) certificate
+### Create an OpenVPN client (user) certificate & key pair
 An OpenVPN client certificate is quite simple - it just needs a
 common name. For convenience, you may use the email address as the 
 common Name.
@@ -219,23 +221,27 @@ The code is organized as a library & command line frontend for that library.
 
 * We use go module support; you will need go 1.10+ or later
 
-* The build script ``build`` is a shell script to build the program.
+* The build script `build` is a shell script to build the program.
   It does two very important things:
-    * Puts the binary in an OS/Arch specific directory
+    * Puts the binary in an OS+Arch specific directory
     * Injects a git version-tag into the final binary ("linker resolved symbol")
-
-* Database encryption:
-    * User passphrase is first expanded to 64 bytes by SHA-512 hashing it.
-    * Every encryption uses a different key generated via Argon2i KDF. The
-      KDF uses the expanded passphrase with random 32 byte salt.
-    * The KDF parameters are hardcoded in `db.go:kdf()` function.
-    * Database entries are encrypted in AEAD (AES-256-GCM) mode individually.
-    * Each encrypt operation uses a different key derived as above.
-    * The AEAD nonce is a SHA-256 hash of the KDF salt.
-    * The salt is used as additional data in the AEAD construction.
 
 * The OpenVPN server & client configuration templates are in `src/export.go`.
   It uses golang's `text/template` syntax.
+
+* Database encryption:
+    * User passphrase is first expanded to 64 bytes by hashing it via SHA-512.
+    * Every encryption uses a different key generated via Argon2i KDF. The
+      KDF uses the expanded passphrase with a random 32 byte salt.
+    * The KDF parameters are hardcoded in `db.go:kdf()` function;
+      it is currently `Time = 1`, `Mem = 1048576`, and `Threads = 8`.
+    * Database entries are individually encrypted in AEAD (AES-256-GCM) mode.
+      The AEAD nonce size is 32 bytes (instead of the golang default
+      of 12 bytes).
+    * Each encrypt operation uses a different key derived as above.
+    * The KDF salt is used as additional data in the AEAD construction.
+    * The AEAD nonce is a SHA-256 hash of the KDF salt; this saves
+      us from having to generate & save another random quantity.
 
 ## Guide to Source Code
 * `internal/ovpn/`: Core library that does certificate management and
