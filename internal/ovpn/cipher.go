@@ -19,11 +19,19 @@ package ovpn
 //   the salt.
 
 import (
-	"crypto/sha256"
-	"crypto/rand"
 	"crypto/aes"
 	"crypto/cipher"
+	"crypto/hmac"
+	"crypto/rand"
+	"crypto/sha256"
 )
+
+// entangle an expanded password with a DB key
+func (d *database) key(cn string) []byte {
+	m := hmac.New(sha256.New, d.pwd)
+	m.Write([]byte(cn))
+	return m.Sum(nil)
+}
 
 // encrypt a blob and return it
 func (d *database) encrypt(b []byte) ([]byte, error) {
@@ -91,5 +99,3 @@ func (d *database) decrypt(b []byte) ([]byte, error) {
 
 	return c, nil
 }
-
-

@@ -211,7 +211,6 @@ custom configuration templates:
 
 ## TODO
 
-* CRL Support
 * Tests
 
 # Development Notes
@@ -235,6 +234,7 @@ The code is organized as a library & command line frontend for that library.
       KDF uses the expanded passphrase with a random 32 byte salt.
     * The KDF parameters are hardcoded in `db.go:kdf()` function;
       it is currently `Time = 1`, `Mem = 1048576`, and `Threads = 8`.
+    * Database keys are entangled with the expanded passphrase via HMAC-SHA256.
     * Database entries are individually encrypted in AEAD (AES-256-GCM) mode.
       The AEAD nonce size is 32 bytes (instead of the golang default
       of 12 bytes).

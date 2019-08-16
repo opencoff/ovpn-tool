@@ -31,13 +31,14 @@ import (
 	"math/big"
 	"os"
 	"path"
+	"time"
 
 	"golang.org/x/crypto/argon2"
 )
 
 type database struct {
-	db *bolt.DB
-	pwd []byte   // expanded 64 byte passphrase
+	db  *bolt.DB
+	pwd []byte // expanded 64 byte passphrase
 
 	// set to true if CA has been initialized
 	ca bool
@@ -101,6 +102,11 @@ func newDB(fn string, pw string, creat bool) (*database, error) {
 		if err != nil {
 			return fmt.Errorf("%s: can't create ca bucket: %s", fn, err)
 		}
+
+		_, err = tx.CreateBucketIfNotExists([]byte("revoked"))
+		if err != nil {
+			return fmt.Errorf("%s: can't create revoked bucket: %s", fn, err)
+		}
 		return nil
 	})
 
@@ -132,8 +138,8 @@ func (d *database) getCA(pw string) (*cadata, error) {
 			return fmt.Errorf("can't find config bucket")
 		}
 
-		rgb := bc.Get([]byte("ca"))
-		rsn := bc.Get([]byte("serial"))
+		rgb := bc.Get(d.key("ca"))
+		rsn := bc.Get(d.key("serial"))
 		if rgb == nil || rsn == nil {
 			return nil
 		}
@@ -142,12 +148,11 @@ func (d *database) getCA(pw string) (*cadata, error) {
 		if err != nil {
 			return fmt.Errorf("can't decrypt ca: %s", err)
 		}
-		
+
 		sn, err := d.decrypt(rsn)
 		if err != nil {
 			return fmt.Errorf("can't decrypt serial#: %s", err)
 		}
-		
 
 		ck, err := decodeCert("ca", gb)
 		if err != nil {
@@ -308,12 +313,12 @@ func (d *database) putCA(ca *cadata, pw string) error {
 			return fmt.Errorf("can't find config bucket")
 		}
 
-		err := bc.Put([]byte("ca"), eb)
+		err := bc.Put(d.key("ca"), eb)
 		if err != nil {
 			return fmt.Errorf("can't write ca data: %s", err)
 		}
 
-		err = bc.Put([]byte("serial"), es)
+		err = bc.Put(d.key("serial"), es)
 		if err != nil {
 			return fmt.Errorf("can't write serial#: %s", err)
 		}
@@ -334,19 +339,19 @@ func (d *database) getcn(cn string) (interface{}, error) {
 	return c, err
 }
 
-func decodeSrv(cn string, ub []byte) (*Server, error) {
+func decodeSrv(ub []byte) (*Server, error) {
 	var sg srvgob
 
 	b := bytes.NewBuffer(ub)
 	g := gob.NewDecoder(b)
 	err := g.Decode(&sg)
 	if err != nil {
-		return nil, fmt.Errorf("%s: can't gob-unmarshal: %s", cn, err)
+		return nil, fmt.Errorf("can't gob-unmarshal: %s", err)
 	}
 
 	cert, err := x509.ParseCertificate(sg.Cert)
 	if err != nil {
-		return nil, fmt.Errorf("%s: can't parse cert: %s", cn, err)
+		return nil, fmt.Errorf("can't parse cert: %s", err)
 	}
 
 	sd := &Server{
@@ -376,7 +381,7 @@ func (d *database) getsrv(cn string) (*Server, error) {
 			return fmt.Errorf("%s: can't find server bucket", cn)
 		}
 
-		rub := bu.Get([]byte(cn))
+		rub := bu.Get(d.key(cn))
 		if rub == nil {
 			return fmt.Errorf("%s: can't find server", cn)
 		}
@@ -386,9 +391,9 @@ func (d *database) getsrv(cn string) (*Server, error) {
 			return fmt.Errorf("can't decrypt server info: %s", err)
 		}
 
-		sd, err := decodeSrv(cn, ub)
+		sd, err := decodeSrv(ub)
 		if err != nil {
-			return nil
+			return err
 		}
 
 		s = sd
@@ -410,7 +415,7 @@ func (d *database) getuser(cn string) (*Cert, error) {
 			return fmt.Errorf("%s: can't find user bucket", cn)
 		}
 
-		rub := bu.Get([]byte(cn))
+		rub := bu.Get(d.key(cn))
 		if rub == nil {
 			return fmt.Errorf("%s: can't find user", cn)
 		}
@@ -477,12 +482,12 @@ func (d *database) putsrv(s *Server, pw string) error {
 			return fmt.Errorf("%s: can't find config bucket", sn)
 		}
 
-		err := bs.Put([]byte(sn), eb)
+		err := bs.Put(d.key(sn), eb)
 		if err != nil {
 			return fmt.Errorf("%s: can't write server info: %s", sn, err)
 		}
 
-		err = bc.Put([]byte("serial"), es)
+		err = bc.Put(d.key("serial"), es)
 		if err != nil {
 			return fmt.Errorf("%s: can't write serial#: %s", sn, err)
 		}
@@ -526,12 +531,12 @@ func (d *database) putuser(c *Cert, pw string) error {
 			return fmt.Errorf("%s: can't find config bucket", sn)
 		}
 
-		err := bu.Put([]byte(sn), eb)
+		err := bu.Put(d.key(sn), eb)
 		if err != nil {
 			return fmt.Errorf("%s: can't write user info: %s", sn, err)
 		}
 
-		err = bc.Put([]byte("serial"), es)
+		err = bc.Put(d.key("serial"), es)
 		if err != nil {
 			return fmt.Errorf("%s: can't write serial#: %s", sn, err)
 		}
@@ -541,7 +546,6 @@ func (d *database) putuser(c *Cert, pw string) error {
 	return err
 }
 
-
 // delete user
 func (d *database) deluser(cn string) error {
 	err := d.db.Update(func(tx *bolt.Tx) error {
@@ -550,7 +554,74 @@ func (d *database) deluser(cn string) error {
 			return fmt.Errorf("%s: can't find user bucket", cn)
 		}
 
-		return bu.Delete([]byte(cn))
+		rv := tx.Bucket([]byte("revoked"))
+		if bu == nil {
+			return fmt.Errorf("%s: can't find revoked bucket", cn)
+		}
+
+		k := d.key(cn)
+		rub := bu.Get(d.key(cn))
+		if rub == nil {
+			return fmt.Errorf("%s: can't find user", cn)
+		}
+
+		now, err := time.Now().UTC().MarshalBinary()
+		if err != nil {
+			return fmt.Errorf("%s: can't get time: %s", cn, err)
+		}
+
+		et, err := d.encrypt(now)
+		if err != nil {
+			return fmt.Errorf("%s: can't encrypt time: %s", cn, err)
+		}
+
+		// Add the cert on the revoked list. We'll use this to list revoked certs
+		// and generate an up-to-date CRL.
+		err = rv.Put(et, rub)
+		if err != nil {
+			return fmt.Errorf("%s: can't add to revoked bucket: %s", cn, err)
+		}
+
+		return bu.Delete(k)
+	})
+	return err
+}
+
+// iterators for revoked certs
+func (d *database) mapRevoked(fp func(t time.Time, c *x509.Certificate)) error {
+	err := d.db.View(func(tx *bolt.Tx) error {
+		bs := tx.Bucket([]byte("revoked"))
+		if bs == nil {
+			return fmt.Errorf("can't find revoked bucket")
+		}
+
+		err := bs.ForEach(func(k, ev []byte) error {
+			tb, err := d.decrypt(k)
+			if err != nil {
+				return fmt.Errorf("can't decrypt time: %s", err)
+			}
+
+			var t time.Time
+
+			err = t.UnmarshalBinary(tb)
+			if err != nil {
+				return fmt.Errorf("can't decode time: %s", err)
+			}
+
+			v, err := d.decrypt(ev)
+			if err != nil {
+				return fmt.Errorf("can't decrypt revoked cert: %s", err)
+			}
+
+			ck, err := decodeCert("$revoked-cert", v)
+			if err != nil {
+				return err
+			}
+
+			fp(t, ck.Crt)
+			return nil
+		})
+		return err
 	})
 	return err
 }
@@ -564,14 +635,12 @@ func (d *database) mapSrv(fp func(s *Server)) error {
 		}
 
 		err := bs.ForEach(func(k, ev []byte) error {
-			cn := string(k)
-
 			v, err := d.decrypt(ev)
 			if err != nil {
 				return fmt.Errorf("can't decrypt server info: %s", err)
 			}
 
-			sd, err := decodeSrv(cn, v)
+			sd, err := decodeSrv(v)
 			if err != nil {
 				return err
 			}
@@ -595,14 +664,12 @@ func (d *database) mapUser(fp func(c *Cert)) error {
 		}
 
 		err := bu.ForEach(func(k, ev []byte) error {
-			cn := string(k)
-
 			v, err := d.decrypt(ev)
 			if err != nil {
 				return fmt.Errorf("can't decrypt client info: %s", err)
 			}
 
-			ck, err := decodeCert(cn, v)
+			ck, err := decodeCert("$user-cert", v)
 			if err != nil {
 				return err
 			}

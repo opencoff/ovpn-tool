@@ -31,13 +31,13 @@ import (
 
 // CA is a special type of Credential that also has a CSR in it.
 type CA struct {
-	Crt    *x509.Certificate
+	Crt     *x509.Certificate
 	privKey *ecdsa.PrivateKey
 	serial  *big.Int
 
 	db *database
 
-	passwd   string
+	passwd string
 }
 
 // Cert represents a client or server certificate
@@ -123,11 +123,11 @@ func NewCA(p *CAparams) (*CA, error) {
 	}
 
 	ca := &CA{
-		Crt:      cd.Crt,
-		db:       d,
-		privKey:  cd.Key,
-		passwd:   p.Passwd,
-		serial:   cd.serial,
+		Crt:     cd.Crt,
+		db:      d,
+		privKey: cd.Key,
+		passwd:  p.Passwd,
+		serial:  cd.serial,
 	}
 
 	return ca, nil
@@ -177,7 +177,6 @@ func (ca *CA) FindUser(cn string) (*Cert, error) {
 	return ca.db.getuser(cn)
 }
 
-
 // delete a user
 func (ca *CA) DeleteUser(cn string) error {
 	return ca.db.deluser(cn)
@@ -190,6 +189,11 @@ func (ca *CA) MapServers(fp func(s *Server)) error {
 
 func (ca *CA) MapUsers(fp func(c *Cert)) error {
 	return ca.db.mapUser(fp)
+}
+
+// return list of revoked certs
+func (ca *CA) MapRevoked(fp func(t time.Time, z *x509.Certificate)) error {
+	return ca.db.mapRevoked(fp)
 }
 
 // Information needed in a certificate
@@ -232,6 +236,56 @@ func (ca *CA) NewClientCert(ci *CertInfo, pw string) (*Cert, error) {
 	}
 
 	return ca.newCert(ci, false, pw)
+}
+
+// Generate a CRL out of revoked certs.
+func (ca *CA) CRL() (*pkix.CertificateList, error) {
+	der, err := ca.crl()
+	if err != nil {
+		return nil, err
+	}
+
+	cl, err := x509.ParseDERCRL(der)
+	if err != nil {
+		return nil, err
+	}
+
+	return cl, nil
+}
+
+// Generate a CRL out of revoked certs and
+// return a PEM encoded block
+func (ca *CA) CRLPEM() ([]byte, error) {
+	der, err := ca.crl()
+	if err != nil {
+		return nil, err
+	}
+
+	p := pem.Block{
+		Type:  "X509 CRL",
+		Bytes: der,
+	}
+	return pem.EncodeToMemory(&p), nil
+}
+
+// return DER encoded CRL
+func (ca *CA) crl() ([]byte, error) {
+
+	var rv []pkix.RevokedCertificate
+	err := ca.db.mapRevoked(func(t time.Time, c *x509.Certificate) {
+		r := pkix.RevokedCertificate{
+			SerialNumber:   c.SerialNumber,
+			RevocationTime: t,
+		}
+
+		rv = append(rv, r)
+	})
+
+	// XXX CRL is valid for 30 days?
+	now := time.Now().UTC()
+	exp := now.Add(30 * 24 * time.Hour)
+	der, err := ca.Crt.CreateCRL(rand.Reader, ca.privKey, rv, now, exp)
+	return der, err
 }
 
 // Generate a new serial# for this CA instance
@@ -323,11 +377,11 @@ func createCA(p *CAparams, db *database) (*CA, error) {
 	}
 
 	ca := &CA{
-		Crt:      cert,
-		db:       db,
-		privKey:  eckey,
-		passwd:   p.Passwd,
-		serial:   z.serial,
+		Crt:     cert,
+		db:      db,
+		privKey: eckey,
+		passwd:  p.Passwd,
+		serial:  z.serial,
 	}
 
 	return ca, nil
