@@ -39,9 +39,7 @@ func initCA(dbfile string, args []string, init bool) *ovpn.CA {
 
 	var country, org, ou string
 	var yrs uint
-	var nopw bool
 
-	fs.BoolVarP(&nopw, "no-password", "", false, "Do NOT use a password for the CA")
 	fs.StringVarP(&country, "country", "c", "US", "Use `C` as the country name")
 	fs.StringVarP(&org, "organization", "O", "", "Use `O` as the organization name")
 	fs.StringVarP(&ou, "organization-unit", "u", "", "Use `U` as the organization unit name")

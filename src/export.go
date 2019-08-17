@@ -34,7 +34,7 @@ func ExportCert(db string, args []string) {
 	var templ string
 	var prUser, prSrv bool
 
-	fs.StringVarP(&outfile, "outfile", "o", "", "Write the cert & key into `F`.crt, `F`.key and `F`.ca")
+	fs.StringVarP(&outfile, "outfile", "o", "", "Write the output to file `F`")
 	fs.StringVarP(&server, "server", "s", "", "Export configuration for use with server `S`")
 	fs.StringVarP(&templ, "template", "t", "", "Use openvpn config template from file `T`")
 	fs.BoolVarP(&prUser, "print-client-template", "", false, "Dump the OpenVPN client template")

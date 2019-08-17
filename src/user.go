@@ -19,19 +19,17 @@ import (
 )
 
 func UserCert(db string, args []string) {
-	fs := flag.NewFlagSet("server", flag.ExitOnError)
+	fs := flag.NewFlagSet("user", flag.ExitOnError)
 	fs.Usage = func() {
 		userUsage(fs)
 	}
 
 	var yrs uint = 2
 	var askPw bool
-	var deluser bool
 	var email string
 
 	fs.UintVarP(&yrs, "validity", "V", yrs, "Issue user certificate with `N` years validity")
 	fs.BoolVarP(&askPw, "password", "p", false, "Ask for a password to protect the user certificate")
-	fs.BoolVarP(&deluser, "delete", "d", false, "Delete user from database")
 	fs.StringVarP(&email, "email", "e", email, "Use `E` as the user's email address")
 
 	err := fs.Parse(args)
@@ -50,15 +48,6 @@ func UserCert(db string, args []string) {
 
 	var cn string = args[0]
 	var pw string
-
-	if deluser {
-		Print("Deleting user %s ..\n", cn)
-		err := ca.DeleteUser(cn)
-		if err != nil {
-			die("can't delete user %s: %s", cn, err)
-		}
-		return
-	}
 
 	if askPw {
 		var err error

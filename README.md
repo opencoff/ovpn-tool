@@ -14,8 +14,8 @@ such as openssl. It is a replacement for and an enhancement to easy-rsa
    * "SSL-Server" attribute set on server certificates (nsCertType)
    * "SSL-Client" attribute set on client certificates (nsCertType)
    * ECDSA with SHA512 is used as the signature algorithm
-* The generated OpenVPN configuration runs with opinionated set of
-  defaults:
+* The generated OpenVPN configuration for client or server uses inline
+  certificates, keys *and* runs with an opinionated set of defaults:
    * `TLS-ECDHE-ECDSA-WITH-AES-256-GCM-SHA384:TLS-ECDHE-ECDSA-WITH-AES-128-GCM-SHA256` for
       TLS control channel
    * `AES-256-GCM` for data encryption
@@ -31,8 +31,6 @@ such as openssl. It is a replacement for and an enhancement to easy-rsa
    * The Client and Server configurations uses the `tls-crypt` option
      to ensure that the server is protected with an additional layer
      of encryption to thwart DoS attacks.
-* The generated OpenVPN configuration for client or server uses inline
-certificates, keys.
 
 
 ## Building ovpn-tool
@@ -68,7 +66,7 @@ Where:
   [boltdb](https://github.com/etcd/bbolt) instance.
 
 * *CMD* is a command - one of `init`, `server`, `client`, `export`,
-  `list`.
+  `list`, `delete`, `crl`.
 
 The tool writes the certificates, keys into an encrypted boltdb instance.
 
@@ -145,6 +143,30 @@ supplied passphrase by using the `-p` or `--password` option to the
 `client` command.  You can request the client certificate to have
 a different validity via the `V` (`--validity`) option; this option
 takes the value in units of years.
+
+### Delete an OpenVPN user from the Cert Database
+Once in a while you will want to delete users and prevent them from
+connecting to the OpenVPN server. E.g.,
+
+    $ ovpn-tool -v foo.db delete user@domain.name user2@domain
+
+This only deletes the users from the certificate DB. You still need
+to generate a new CRL (Certificate Revocation List) and push it to
+your server. See the next workflow.
+
+### Generate a CRL from Revoked Certificates
+Once a user is deleted from the system, you will need to generate a
+new CRL and push it to the server. The command to generate a new
+CRL:
+
+    $ ovpn-tool -v foo.db crl -o crl.pem
+
+This write the PEM encoded CRL to `crl.pem`. You must copy this file
+to the OpenVPN server and reload (or restart) it.
+
+You can also just view a full list of revoked users:
+
+    $ ovpn-tool foo.db crl --list
 
 ### See list of certificates managed by this CA
 To see a list of certificates in the database:

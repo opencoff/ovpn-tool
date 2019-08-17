@@ -11,7 +11,6 @@ package main
 import (
 	"fmt"
 	"os"
-	"crypto/x509"
 	"time"
 
 	"github.com/opencoff/ovpn-tool/internal/ovpn"
@@ -24,10 +23,9 @@ func ListCert(db string, args []string) {
 		listUsage(fs)
 	}
 
-	var showCA, revoked bool
+	var showCA bool
 
 	fs.BoolVarP(&showCA, "ca", "", false, "Display the CA certificate")
-	fs.BoolVarP(&revoked, "revoked", "", false, "Display revoked users")
 
 	err := fs.Parse(args)
 	if err != nil {
@@ -39,17 +37,6 @@ func ListCert(db string, args []string) {
 
 	if showCA {
 		fmt.Printf("CA Certificate:\n%s\n", Cert(*ca.Crt))
-	}
-
-	if revoked {
-		err := ca.MapRevoked(func(t time.Time, z *x509.Certificate) {
-			fmt.Printf("%-16s  %#x (%s)\n", z.Subject.CommonName, z.SerialNumber, t)
-		})
-
-		if err != nil {
-			die("%s", err)
-		}
-		return
 	}
 
 	args = fs.Args()

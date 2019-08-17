@@ -1,4 +1,4 @@
-// cert.go - simple cert manager
+// main.go - simple cert manager
 //
 // (c) 2018 Sudhi Herle; License GPLv2
 //
@@ -39,7 +39,9 @@ Where 'DB' points to the certificate database, and 'CMD' is one of:
     server            Create a new server certificate
     list, show        List one or all certificates in the DB
     export            Export a OpenVPN server or client configuration
+    delete	      Delete a user and revoke their certificate
     user, client      Create a new user/client certificate
+    crl		      List revoked certificates or generate CRL
 
 Options:
 `, path.Base(os.Args[0]), os.Args[0])
@@ -62,26 +64,25 @@ Options:
 
 	db := args[0]
 
-	// handle the common case of people forgetting the DB
-	switch strings.ToLower(db) {
-	case "init", "server", "list", "dump", "show", "user", "client":
-		flag.Usage()
-		os.Exit(1)
-
-	default:
-	}
-
 	var cmds = map[string]func(string, []string){
 		"init":   InitCmd,
 		"server": ServerCert,
 		"user":   UserCert,
+		"delete": DelUser,
 		"client": UserCert,
 		"export": ExportCert,
 		"show":   ListCert,
 		"list":   ListCert,
+		"crl":    ListCRL,
+	}
+	// handle the common case of people forgetting the DB
+	cmd := strings.ToLower(db)
+	if _, ok := cmds[cmd]; ok {
+		flag.Usage()
+		os.Exit(1)
 	}
 
-	cmd := strings.ToLower(args[1])
+	cmd = strings.ToLower(args[1])
 	fp, ok := cmds[cmd]
 	if !ok {
 		die("unknown command '%s'", cmd)
