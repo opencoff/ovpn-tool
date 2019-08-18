@@ -55,7 +55,7 @@ func ListCRL(db string, args []string) {
 		out.Write(pem)
 	} else {
 		err := ca.MapRevoked(func(t time.Time, z *x509.Certificate) {
-			fmt.Printf("%-16s  %#x (%s)\n", z.Subject.CommonName, z.SerialNumber, t)
+			fmt.Printf("%-16s  %#x revoked on %s\n", z.Subject.CommonName, z.SerialNumber, t)
 		})
 
 		if err != nil {
