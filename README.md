@@ -242,6 +242,11 @@ The code is organized as a library & command line frontend for that library.
 
 * We use go module support; you will need go 1.10+ or later
 
+* The common PKI creation & storage is in the `pki/` library. This
+  library can be used by external callers. e.g., see
+  https://github.com/opencoff/certiki
+
+
 * The build script `build` is a shell script to build the program.
   It does two very important things:
     * Puts the binary in an OS+Arch specific directory
@@ -266,8 +271,7 @@ The code is organized as a library & command line frontend for that library.
       us from having to generate & save another random quantity.
 
 ## Guide to Source Code
-* `internal/ovpn/`: Core library that does certificate management and
-  storage.
+* `pki/`: PKI abstraction - includes database storage, marshaling/unmarshaling etc.
 
     - `cert.go`:   Certificate issuance & query routines
     - `db.go`:     Cert storage in a boltdb instance

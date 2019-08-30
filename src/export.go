@@ -18,7 +18,7 @@ import (
 	"text/template"
 	"time"
 
-	"github.com/opencoff/ovpn-tool/internal/ovpn"
+	"github.com/opencoff/ovpn-tool/pki"
 	flag "github.com/opencoff/pflag"
 )
 
@@ -79,7 +79,7 @@ func ExportCert(db string, args []string) {
 	ca := OpenCA(db)
 	defer ca.Close()
 
-	var srv *ovpn.Server
+	var srv *pki.Cert
 
 	if len(server) > 0 {
 		// we ignore the unusual case exporting server config for use itself
@@ -103,6 +103,8 @@ func ExportCert(db string, args []string) {
 		Date: time.Now().UTC().Format(time.RFC1123Z),
 		Tool: toolInfo(),
 		Ca:   string(ca.PEM()),
+		IP:   "0.0.0.0",
+		Port: 1194,
 	}
 
 	if s, err := ca.FindServer(cn); err == nil {
@@ -145,20 +147,20 @@ type exported struct {
 	Port uint16
 }
 
-func (x *exported) exportServer(s *ovpn.Server, t string, out io.Writer) {
+func (x *exported) exportServer(s *pki.Cert, t string, out io.Writer) {
 	tmpl, err := template.New("ovpn-server").Parse(t)
 	if err != nil {
 		die("can't parse server template: %s", err)
 	}
 
-	x.fill(s, &s.Cert)
+	x.fill(s, s)
 	err = tmpl.Execute(out, x)
 	if err != nil {
 		die("Can't fill out template: %s", err)
 	}
 }
 
-func (x *exported) exportUser(c *ovpn.Cert, srv *ovpn.Server, t string, out io.Writer) {
+func (x *exported) exportUser(c *pki.Cert, srv *pki.Cert, t string, out io.Writer) {
 	tmpl, err := template.New("ovpn-client").Parse(t)
 	if err != nil {
 		die("can't parse client template: %s", err)
@@ -171,12 +173,12 @@ func (x *exported) exportUser(c *ovpn.Cert, srv *ovpn.Server, t string, out io.W
 	}
 }
 
-func (x *exported) fill(s *ovpn.Server, c *ovpn.Cert) {
-	if s == nil {
-		x.IP = "0.0.0.0"
-		x.Port = 1194
-	} else {
-		si := &s.ServerInfo
+func (x *exported) fill(s *pki.Cert, c *pki.Cert) {
+	if s != nil {
+		sd, err := decodeAdditional(s.Additional)
+		if err != nil {
+			die("%s", err)
+		}
 
 		x.ServerCommonName = s.Crt.Subject.CommonName
 		if len(s.Crt.IPAddresses) > 0 {
@@ -193,13 +195,15 @@ func (x *exported) fill(s *ovpn.Server, c *ovpn.Cert) {
 			x.Host = x.IP
 		}
 
-		x.Port = si.Port
-		if x.Port == 0 {
-			x.Port = 1194
-		}
+		if sd != nil {
+			x.Port = sd.Port
+			if x.Port == 0 {
+				x.Port = 1194
+			}
 
-		if len(si.TLS) > 0 {
-			x.TlsCrypt = fmtTLS(si.TLS)
+			if len(sd.TLS) > 0 {
+				x.TlsCrypt = fmtTLS(sd.TLS)
+			}
 		}
 	}
 
@@ -352,11 +356,9 @@ mute 20
 <ca>
 {{ .Ca }}</ca>
 <cert>
-{{ .Cert }}
-</cert>
+{{ .Cert }}</cert>
 <key>
-{{ .Key }}
-</key>
+{{ .Key }}</key>
 {{ .TlsCrypt }}
 
 `
@@ -389,14 +391,11 @@ verify-x509-name "{{ .ServerCommonName }}"
 
 # Inline certs, keys and tls-crypt follows
 <ca>
-{{ .Ca }}
-</ca>
+{{ .Ca }}</ca>
 <cert>
-{{ .Cert }}
-</cert>
+{{ .Cert }}</cert>
 <key>
-{{ .Key }}
-</key>
+{{ .Key }}</key>
 {{ .TlsCrypt }}
 `
 

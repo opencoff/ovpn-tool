@@ -9,14 +9,50 @@
 package main
 
 import (
+	"bytes"
+	"crypto/rand"
+	"encoding/gob"
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"strings"
 
-	"github.com/opencoff/ovpn-tool/internal/ovpn"
+	"github.com/opencoff/ovpn-tool/pki"
 	flag "github.com/opencoff/pflag"
 )
+
+type srvdata struct {
+	Port uint16
+	TLS  []byte
+}
+
+// Encode additional info for a server
+func encodeAdditional(s *srvdata) ([]byte, error) {
+
+	var b bytes.Buffer
+	g := gob.NewEncoder(&b)
+	if err := g.Encode(s); err != nil {
+		return nil, fmt.Errorf("can't encode additional data: %s", err)
+	}
+
+	return b.Bytes(), nil
+}
+
+func decodeAdditional(eb []byte) (*srvdata, error) {
+	if len(eb) == 0 {
+		return nil, nil
+	}
+
+	var s srvdata
+
+	b := bytes.NewBuffer(eb)
+	g := gob.NewDecoder(b)
+	if err := g.Decode(&s); err != nil {
+		return nil, fmt.Errorf("can't decode additional data: %s", err)
+	}
+	return &s, nil
+}
 
 // Implement the 'server' command
 func ServerCert(db string, args []string) {
@@ -55,21 +91,37 @@ func ServerCert(db string, args []string) {
 		warn("No server IP or hostnames specified; generated configs may be incomplete..")
 	}
 
+	tlscrypt := make([]byte, 256)
+	_, err = io.ReadFull(rand.Reader, tlscrypt)
+	if err != nil {
+		panic("can't read tlscrypt random bytes")
+	}
+
+	sd := &srvdata{
+		Port: port,
+		TLS:  tlscrypt,
+	}
+
+	encA, err := encodeAdditional(sd)
+	if err != nil {
+		die("%s", err)
+	}
+
 	ca := OpenCA(db)
 	defer ca.Close()
 
-	ci := &ovpn.CertInfo{
-		Subject:  ca.Crt.Subject,
-		Validity: years(yrs),
-
-		DNSNames:  dns.V,
-		IPAddress: ip,
-		Port:      port,
+	ci := &pki.CertInfo{
+		Subject:    ca.Crt.Subject,
+		Validity:   years(yrs),
+		DNSNames:   dns.V,
+		IPAddress:  ip,
+		Additional: encA,
 	}
 
 	ci.Subject.CommonName = cn
 
-	srv, err := ca.NewServerCert(ci)
+	// We don't encrypt server certs
+	srv, err := ca.NewServerCert(ci, "")
 	if err != nil {
 		die("can't create server cert: %s", err)
 	}

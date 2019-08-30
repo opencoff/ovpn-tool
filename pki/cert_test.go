@@ -1,4 +1,4 @@
-package ovpn_test
+package pki_test
 
 /*
 import (

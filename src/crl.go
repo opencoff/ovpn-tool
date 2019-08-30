@@ -47,7 +47,7 @@ func ListCRL(db string, args []string) {
 	}
 
 	if !list {
-		pem, err := ca.CRLPEM()
+		pem, err := ca.CRL(30)
 		if err != nil {
 			die("%s", err)
 		}

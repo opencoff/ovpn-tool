@@ -1,4 +1,4 @@
-// cert.go - opinionated pki for openvpn
+// cert.go - opinionated pki manager
 //
 // (c) 2018 Sudhi Herle; License GPLv2
 //
@@ -6,12 +6,12 @@
 // warranty; it is provided "as is". No claim  is made to its
 // suitability for any purpose.
 
-// Package ovpn abstracts creating an opinionated PKI for OpenVPN
+// Package pki abstracts creating an opinionated PKI.
 // The certs and keys are stored in a boltDB instance. The private keys
 // are stored in encrypted form. The CA passphrase is used in a KDF to derive
 // the encryption keys. User (client) certs are also encrypted - but with
 // user provided passphrase.
-package ovpn
+package pki
 
 import (
 	"crypto/ecdsa"
@@ -23,7 +23,6 @@ import (
 	"encoding/pem"
 	"errors"
 	"fmt"
-	"io"
 	"math/big"
 	"net"
 	"time"
@@ -45,23 +44,25 @@ type Cert struct {
 	Crt    *x509.Certificate
 	Key    *ecdsa.PrivateKey
 	Rawkey []byte
+
+	// Additional info provided when cert was created
+	Additional []byte
 }
 
-// Server Info
-type ServerInfo struct {
-	// External VPN IP:port (server endpoint)
-	IP   net.IP
-	Port uint16
+// Information needed to create a certificate
+type CertInfo struct {
+	Subject  pkix.Name
+	Validity time.Duration
 
-	// DoS protection via --tls-crypt
-	// This is a 2048 bit mutually shared key
-	TLS []byte
-}
+	EmailAddresses []string
+	DNSNames       []string
 
-// Server data
-type Server struct {
-	Cert
-	ServerInfo
+	// We only support exactly _one_ IP address
+	IPAddress net.IP
+
+	// Additional info stored in the DB against this certificate
+	// This info is *NOT* in the x509 object.
+	Additional []byte
 }
 
 // Return the certificate & Key in PEM format.
@@ -157,7 +158,7 @@ func (ca *CA) Close() error {
 // Find a given cn and return the corresponding cert
 func (ca *CA) Find(cn string) (*Cert, error) {
 	if s, err := ca.db.getsrv(cn); err == nil {
-		return &s.Cert, nil
+		return s, nil
 	}
 
 	if c, err := ca.db.getuser(cn); err == nil {
@@ -168,7 +169,7 @@ func (ca *CA) Find(cn string) (*Cert, error) {
 }
 
 // Find a server with a given common name
-func (ca *CA) FindServer(cn string) (*Server, error) {
+func (ca *CA) FindServer(cn string) (*Cert, error) {
 	return ca.db.getsrv(cn)
 }
 
@@ -182,8 +183,13 @@ func (ca *CA) DeleteUser(cn string) error {
 	return ca.db.deluser(cn)
 }
 
+// delete a server
+func (ca *CA) DeleteServer(cn string) error {
+	return ca.db.delsrv(cn)
+}
+
 // Iterate over every cert in the list
-func (ca *CA) MapServers(fp func(s *Server)) error {
+func (ca *CA) MapServers(fp func(c *Cert)) error {
 	return ca.db.mapSrv(fp)
 }
 
@@ -196,21 +202,8 @@ func (ca *CA) MapRevoked(fp func(t time.Time, z *x509.Certificate)) error {
 	return ca.db.mapRevoked(fp)
 }
 
-// Information needed in a certificate
-type CertInfo struct {
-	Subject  pkix.Name
-	Validity time.Duration
-
-	EmailAddresses []string
-	DNSNames       []string
-
-	// We only support exactly _one_ IP address
-	IPAddress net.IP
-	Port      uint16
-}
-
 // Generate and return a new server certificate
-func (ca *CA) NewServerCert(ci *CertInfo) (*Cert, error) {
+func (ca *CA) NewServerCert(ci *CertInfo, pw string) (*Cert, error) {
 	if len(ci.IPAddress) == 0 && len(ci.DNSNames) == 0 {
 		return nil, fmt.Errorf("Server IP/Hostname can't be empty")
 	}
@@ -219,14 +212,9 @@ func (ca *CA) NewServerCert(ci *CertInfo) (*Cert, error) {
 		return nil, ErrExists
 	}
 
-	// XXX Punt?
-	if ci.Port == 0 {
-		ci.Port = 1194
-	}
-
 	// We don't encrypt the server key; we need it in plain text
 	// form when we export it..
-	return ca.newCert(ci, true, "")
+	return ca.newCert(ci, true, pw)
 }
 
 // Generate and return a new client certificate
@@ -238,9 +226,9 @@ func (ca *CA) NewClientCert(ci *CertInfo, pw string) (*Cert, error) {
 	return ca.newCert(ci, false, pw)
 }
 
-// Generate a CRL out of revoked certs.
-func (ca *CA) CRL() (*pkix.CertificateList, error) {
-	der, err := ca.crl()
+// Return a list of revoked certificates
+func (ca *CA) Revoked(CrlValidDays int) (*pkix.CertificateList, error) {
+	der, err := ca.crl(CrlValidDays)
 	if err != nil {
 		return nil, err
 	}
@@ -255,8 +243,8 @@ func (ca *CA) CRL() (*pkix.CertificateList, error) {
 
 // Generate a CRL out of revoked certs and
 // return a PEM encoded block
-func (ca *CA) CRLPEM() ([]byte, error) {
-	der, err := ca.crl()
+func (ca *CA) CRL(CrlValidDays int) ([]byte, error) {
+	der, err := ca.crl(CrlValidDays)
 	if err != nil {
 		return nil, err
 	}
@@ -268,9 +256,8 @@ func (ca *CA) CRLPEM() ([]byte, error) {
 	return pem.EncodeToMemory(&p), nil
 }
 
-// return DER encoded CRL
-func (ca *CA) crl() ([]byte, error) {
-
+// return DER encoded CRL that's valid for 'validity' days
+func (ca *CA) crl(validity int) ([]byte, error) {
 	var rv []pkix.RevokedCertificate
 	err := ca.db.mapRevoked(func(t time.Time, c *x509.Certificate) {
 		r := pkix.RevokedCertificate{
@@ -281,9 +268,8 @@ func (ca *CA) crl() ([]byte, error) {
 		rv = append(rv, r)
 	})
 
-	// XXX CRL is valid for 30 days?
 	now := time.Now().UTC()
-	exp := now.Add(30 * 24 * time.Hour)
+	exp := now.Add(time.Duration(validity) * 24 * time.Hour)
 	der, err := ca.Crt.CreateCRL(rand.Reader, ca.privKey, rv, now, exp)
 	return der, err
 }
@@ -398,7 +384,6 @@ func (ca *CA) newCert(ci *CertInfo, isServer bool, pw string) (*Cert, error) {
 	var val []byte
 	var keyUsage x509.KeyUsage
 	var extKeyUsage x509.ExtKeyUsage
-	var tlscrypt []byte
 	var ipaddrs []net.IP
 
 	if isServer {
@@ -409,16 +394,6 @@ func (ca *CA) newCert(ci *CertInfo, isServer bool, pw string) (*Cert, error) {
 		}
 		keyUsage = x509.KeyUsageDigitalSignature | x509.KeyUsageKeyAgreement | x509.KeyUsageKeyEncipherment
 		extKeyUsage = x509.ExtKeyUsageServerAuth
-
-		tlscrypt = make([]byte, 256)
-		_, err = io.ReadFull(rand.Reader, tlscrypt)
-		if err != nil {
-			panic("can't read tlscrypt random bytes")
-		}
-
-		if len(ci.IPAddress) > 0 {
-			ipaddrs = []net.IP{ci.IPAddress}
-		}
 	} else {
 
 		// nsCert = Client
@@ -428,6 +403,10 @@ func (ca *CA) newCert(ci *CertInfo, isServer bool, pw string) (*Cert, error) {
 		}
 		keyUsage = x509.KeyUsageDigitalSignature | x509.KeyUsageKeyAgreement
 		extKeyUsage = x509.ExtKeyUsageClientAuth
+	}
+
+	if len(ci.IPAddress) > 0 {
+		ipaddrs = []net.IP{ci.IPAddress}
 	}
 
 	pubkey := eckey.Public().(*ecdsa.PublicKey)
@@ -472,21 +451,13 @@ func (ca *CA) newCert(ci *CertInfo, isServer bool, pw string) (*Cert, error) {
 	}
 
 	crt := Cert{
-		Crt: cert,
-		Key: eckey,
+		Crt:        cert,
+		Key:        eckey,
+		Additional: ci.Additional,
 	}
 
 	if isServer {
-		z := &Server{
-			Cert: crt,
-			ServerInfo: ServerInfo{
-				IP:   ci.IPAddress,
-				Port: ci.Port,
-				TLS:  tlscrypt,
-			},
-		}
-
-		err = ca.db.putsrv(z, "")
+		err = ca.db.putsrv(&crt, pw)
 	} else {
 		err = ca.db.putuser(&crt, pw)
 	}

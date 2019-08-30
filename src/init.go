@@ -14,8 +14,8 @@ import (
 	"os"
 	"time"
 
-	"github.com/opencoff/ovpn-tool/internal/ovpn"
 	"github.com/opencoff/ovpn-tool/internal/utils"
+	"github.com/opencoff/ovpn-tool/pki"
 	flag "github.com/opencoff/pflag"
 )
 
@@ -26,12 +26,12 @@ func InitCmd(db string, args []string) {
 }
 
 // Open an existing CA or fail
-func OpenCA(db string) *ovpn.CA {
+func OpenCA(db string) *pki.CA {
 	return initCA(db, []string{}, false)
 }
 
 // initialize a CA in 'dbfile' or read an already initialized CA
-func initCA(dbfile string, args []string, init bool) *ovpn.CA {
+func initCA(dbfile string, args []string, init bool) *pki.CA {
 	fs := flag.NewFlagSet("init", flag.ExitOnError)
 	fs.Usage = func() {
 		initUsage(fs)
@@ -76,7 +76,7 @@ func initCA(dbfile string, args []string, init bool) *ovpn.CA {
 		}
 	}
 
-	p := ovpn.CAparams{
+	p := pki.CAparams{
 		Subject: pkix.Name{
 			Country:            []string{country},
 			Organization:       []string{org},
@@ -90,7 +90,7 @@ func initCA(dbfile string, args []string, init bool) *ovpn.CA {
 		DBfile:          dbfile,
 	}
 
-	ca, err := ovpn.NewCA(&p)
+	ca, err := pki.NewCA(&p)
 	if err != nil {
 		die("%s", err)
 	}

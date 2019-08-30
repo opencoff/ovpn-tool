@@ -7,7 +7,7 @@
 // warranty; it is provided "as is". No claim  is made to its
 // suitability for any purpose.
 
-package ovpn
+package pki
 
 // Internal details:
 // * We use AES-256-GCM for encrypting all data
@@ -24,7 +24,30 @@ import (
 	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha256"
+	"crypto/sha512"
+
+	"golang.org/x/crypto/argon2"
 )
+
+const (
+	_Time    uint32 = 1
+	_Mem     uint32 = 1 * 1024 * 1024
+	_Threads uint8  = 8
+)
+
+// Argon2 KDF
+func kdf(pwd []byte, salt []byte) []byte {
+	// Generate a 32-byte AES-256 key
+	return argon2.IDKey(pwd, salt, _Time, _Mem, _Threads, 32)
+}
+
+// expand a user password string and derive a 32 byte key
+func kdfstr(pw string, salt []byte) []byte {
+	h := sha512.New()
+	h.Write([]byte(pw))
+	pwd := h.Sum(nil)
+	return kdf(pwd, salt)
+}
 
 // entangle an expanded password with a DB key
 func (d *database) key(cn string) []byte {

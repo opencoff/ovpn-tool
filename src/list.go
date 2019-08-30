@@ -13,7 +13,7 @@ import (
 	"os"
 	"time"
 
-	"github.com/opencoff/ovpn-tool/internal/ovpn"
+	"github.com/opencoff/ovpn-tool/pki"
 	flag "github.com/opencoff/pflag"
 )
 
@@ -43,11 +43,11 @@ func ListCert(db string, args []string) {
 
 	if len(args) == 0 {
 
-		ca.MapServers(func(s *ovpn.Server) {
-			printcert(&s.Cert)
+		ca.MapServers(func(c *pki.Cert) {
+			printcert(c)
 		})
 
-		ca.MapUsers(func(c *ovpn.Cert) {
+		ca.MapUsers(func(c *pki.Cert) {
 			printcert(c)
 		})
 
@@ -64,7 +64,7 @@ func ListCert(db string, args []string) {
 	}
 }
 
-func printcert(c *ovpn.Cert) {
+func printcert(c *pki.Cert) {
 	var pref string
 	now := time.Now().UTC()
 	z := c.Crt

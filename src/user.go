@@ -13,8 +13,8 @@ import (
 	"os"
 	"strings"
 
-	"github.com/opencoff/ovpn-tool/internal/ovpn"
 	"github.com/opencoff/ovpn-tool/internal/utils"
+	"github.com/opencoff/ovpn-tool/pki"
 	flag "github.com/opencoff/pflag"
 )
 
@@ -65,7 +65,7 @@ func UserCert(db string, args []string) {
 		}
 	}
 
-	ci := &ovpn.CertInfo{
+	ci := &pki.CertInfo{
 		Subject:        ca.Crt.Subject,
 		Validity:       years(yrs),
 		EmailAddresses: []string{email},

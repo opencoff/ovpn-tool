@@ -15,7 +15,7 @@ import (
 	"path"
 	"strings"
 
-	"github.com/opencoff/ovpn-tool/internal/ovpn"
+	"github.com/opencoff/ovpn-tool/pki"
 	flag "github.com/opencoff/pflag"
 )
 
@@ -95,7 +95,7 @@ type Cert x509.Certificate
 
 func (z Cert) String() string {
 	c := x509.Certificate(z)
-	s, err := ovpn.CertificateText(&c)
+	s, err := pki.CertificateText(&c)
 	if err != nil {
 		s = fmt.Sprintf("can't stringify %x (%s)", c.SerialNumber, err)
 	}
