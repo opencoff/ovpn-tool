@@ -244,7 +244,7 @@ The code is organized as a library & command line frontend for that library.
 
 * The common PKI creation & storage is in the `pki/` library. This
   library can be used by external callers. e.g., see
-  https://github.com/opencoff/certiki
+  https://github.com/opencoff/certik
 
 
 * The build script `build` is a shell script to build the program.
