@@ -27,6 +27,7 @@ import (
 	"crypto/sha512"
 
 	"golang.org/x/crypto/argon2"
+	"golang.org/x/crypto/hkdf"
 )
 
 const (
@@ -38,7 +39,7 @@ const (
 // Argon2 KDF
 func kdf(pwd []byte, salt []byte) []byte {
 	// Generate a 32-byte AES-256 key
-	return argon2.IDKey(pwd, salt, _Time, _Mem, _Threads, 32)
+	return argon2.IDKey(pwd, salt, _Time, _Mem, _Threads, 64)
 }
 
 // expand a user password string and derive a 32 byte key
@@ -49,10 +50,20 @@ func kdfstr(pw string, salt []byte) []byte {
 	return kdf(pwd, salt)
 }
 
+// Expand a strong KDF derived key into a 32 byte cipher key
+func expand(pwd, salt []byte) []byte {
+	var buf [32]byte // AES-256 key
+
+	rd := hkdf.Expand(sha512.New, pwd, salt)
+	rd.Read(buf[:])
+	return buf[:]
+}
+
 // entangle an expanded password with a DB key
 func (d *database) key(cn string) []byte {
 	m := hmac.New(sha256.New, d.pwd)
 	m.Write([]byte(cn))
+	m.Write(d.salt)
 	return m.Sum(nil)
 }
 
@@ -60,17 +71,13 @@ func (d *database) key(cn string) []byte {
 func (d *database) encrypt(b []byte) ([]byte, error) {
 	var salt [32]byte
 
-	n, err := rand.Read(salt[:])
-	if err != nil || n != 32 {
-		panic("can't read 32 rand bytes")
-	}
-
+	randsalt(salt[:])
 	h := sha256.New()
 	h.Write(salt[:])
+	h.Write(d.salt)
 	nonce := h.Sum(nil)
 
-	key := kdf(d.pwd, salt[:])
-
+	key := expand(d.pwd, salt[:])
 	aes, err := aes.NewCipher(key)
 	if err != nil {
 		return nil, err
@@ -101,10 +108,10 @@ func (d *database) decrypt(b []byte) ([]byte, error) {
 
 	h := sha256.New()
 	h.Write(salt[:])
+	h.Write(d.salt)
 	nonce := h.Sum(nil)
 
-	key := kdf(d.pwd, salt)
-
+	key := expand(d.pwd, salt)
 	aes, err := aes.NewCipher(key)
 	if err != nil {
 		return nil, err
@@ -121,4 +128,14 @@ func (d *database) decrypt(b []byte) ([]byte, error) {
 	}
 
 	return c, nil
+}
+
+// read random bytes and return it
+func randsalt(salt []byte) []byte {
+	n, err := rand.Read(salt)
+	if err != nil || n != 32 {
+		panic("can't read 32 rand bytes")
+	}
+
+	return salt
 }

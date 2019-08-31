@@ -23,6 +23,7 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"crypto/sha512"
+	"crypto/subtle"
 	"crypto/x509"
 	"encoding/gob"
 	"encoding/pem"
@@ -36,7 +37,8 @@ import (
 
 type database struct {
 	db  *bolt.DB
-	pwd []byte // expanded 64 byte passphrase
+	pwd  []byte  // expanded 64 byte passphrase
+	salt []byte // KDF salt
 
 	// set to true if CA has been initialized
 	ca bool
@@ -76,6 +78,12 @@ func newDB(fn string, pw string, creat bool) (*database, error) {
 		return nil, err
 	}
 
+	h := sha512.New()
+	h.Write([]byte(pw))
+	pwd := h.Sum(nil)
+
+	var salt []byte
+
 	// initialize key buckets
 	err = db.Update(func(tx *bolt.Tx) error {
 		_, err := tx.CreateBucketIfNotExists([]byte("server"))
@@ -88,15 +96,45 @@ func newDB(fn string, pw string, creat bool) (*database, error) {
 			return fmt.Errorf("%s: can't create user bucket: %s", fn, err)
 		}
 
-		_, err = tx.CreateBucketIfNotExists([]byte("config"))
-		if err != nil {
-			return fmt.Errorf("%s: can't create ca bucket: %s", fn, err)
-		}
-
 		_, err = tx.CreateBucketIfNotExists([]byte("revoked"))
 		if err != nil {
 			return fmt.Errorf("%s: can't create revoked bucket: %s", fn, err)
 		}
+
+		b, err := tx.CreateBucketIfNotExists([]byte("config"))
+		if err != nil {
+			return fmt.Errorf("%s: can't create ca bucket: %s", fn, err)
+		}
+
+
+		skey := []byte("salt")
+		ckey := []byte("check")
+
+		salt = b.Get(skey)
+		chk := b.Get(ckey)
+		if salt == nil || chk == nil {
+			var s [32]byte
+
+			// initialize the DB salt
+			randsalt(s[:])
+			salt = s[:]
+			pwd = kdf(pwd, s[:])
+			chk = hash(pwd)
+
+			b.Put(skey, s[:])
+			b.Put(ckey, chk)
+
+			return nil
+		}
+
+		// This may be an initialized DB. Lets verify it.
+		pwd = kdf(pwd, salt)
+		vrfy := hash(pwd)
+
+		if subtle.ConstantTimeCompare(chk, vrfy) != 1 {
+			return fmt.Errorf("%s: incorrect password", fn)
+		}
+
 		return nil
 	})
 
@@ -104,12 +142,10 @@ func newDB(fn string, pw string, creat bool) (*database, error) {
 		return nil, err
 	}
 
-	h := sha512.New()
-	h.Write([]byte(pw))
-	h.Write([]byte("dbpassword"))
 	d := &database{
-		db:  db,
-		pwd: h.Sum(nil),
+		db:   db,
+		pwd:  pwd,
+		salt: salt,
 	}
 
 	return d, nil
@@ -119,6 +155,7 @@ func (d *database) close() error {
 	return d.db.Close()
 }
 
+// Return an initialized ca info
 func (d *database) getCA(pw string) (*cadata, error) {
 	var c *cadata
 
@@ -166,6 +203,7 @@ func (d *database) getCA(pw string) (*cadata, error) {
 	return c, err
 }
 
+// Decode a serialized cert/key pair
 func decodeCert(cn string, ub []byte) (*Cert, error) {
 	var cg certgob
 
@@ -197,14 +235,7 @@ func (c *Cert) decryptKey(key []byte, pw string) error {
 	var err error
 
 	if x509.IsEncryptedPEMBlock(blk) {
-		pk, ok := c.Crt.PublicKey.(*ecdsa.PublicKey)
-		if !ok {
-			return fmt.Errorf("bad cert (PublicKey not ECDSA)")
-		}
-
-		salt := cksum(pk)
-		pass := kdfstr(pw, salt)
-
+		pass := []byte(pw)
 		der, err = x509.DecryptPEMBlock(blk, pass)
 		if err != nil {
 			return fmt.Errorf("can't decrypt private key: %s", err)
@@ -232,9 +263,7 @@ func (c *Cert) encryptKey(pw string) ([]byte, error) {
 
 	var blk *pem.Block
 	if len(pw) > 0 {
-		salt := cksum(&c.Key.PublicKey)
-		pass := kdfstr(pw, salt)
-
+		pass := []byte(pw)
 		blk, err = x509.EncryptPEMBlock(rand.Reader, "EC PRIVATE KEY", derkey, pass, x509.PEMCipherAES256)
 		if err != nil {
 			return nil, err
@@ -562,9 +591,12 @@ func (d *database) mapcert(table string, fp func(c *Cert)) error {
 
 // hash publickey; we use it as a salt for encryption and also SubjectKeyId
 func cksum(pk *ecdsa.PublicKey) []byte {
-	h := sha256.New()
 	pm := elliptic.Marshal(pk.Curve, pk.X, pk.Y)
+	return hash(pm)
+}
 
-	h.Write(pm)
+func hash(b []byte) []byte {
+	h := sha256.New()
+	h.Write(b)
 	return h.Sum(nil)
 }

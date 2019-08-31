@@ -257,18 +257,20 @@ The code is organized as a library & command line frontend for that library.
 
 * Database encryption:
     * User passphrase is first expanded to 64 bytes by hashing it via SHA-512.
-    * Every encryption uses a different key generated via Argon2i KDF. The
-      KDF uses the expanded passphrase with a random 32 byte salt.
-    * The KDF parameters are hardcoded in `db.go:kdf()` function;
+    * Every database instance has a 32-byte random salt associated with it. This
+      salt is used along with the expanded passphrase above as inputs to the Argon2i
+      KDF. The resulting output is 64-bytes of strong password.
+    * The KDF parameters are hardcoded in `db.go`;
       it is currently `Time = 1`, `Mem = 1048576`, and `Threads = 8`.
-    * Database keys are entangled with the expanded passphrase via HMAC-SHA256.
+    * Database keys are entangled with the expanded passphrase and the DB salt via
+      HMAC-SHA256. We don't use any kind of AEAD here because we need a quick and easy way
+      to map user CN's to actual keys. See how `d.key()` is used in *db.go*.
     * Database entries are individually encrypted in AEAD (AES-256-GCM) mode.
       The AEAD nonce size is 32 bytes (instead of the golang default
       of 12 bytes).
-    * Each encrypt operation uses a different key derived as above.
-    * The KDF salt is used as additional data in the AEAD construction.
-    * The AEAD nonce is a SHA-256 hash of the KDF salt; this saves
-      us from having to generate & save another random quantity.
+    * Each AEAD encrypt instance uses a separate salt and key extracted via HKDF.
+    * The HKDF salt is hashed via SHA256 and used as the AEAD nonce.
+    * The HKDF salt is used as additional data in the AEAD construction.
 
 ## Guide to Source Code
 * `pki/`: PKI abstraction - includes database storage, marshaling/unmarshaling etc.
