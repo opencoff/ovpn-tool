@@ -255,9 +255,9 @@ func fmtTLS(b []byte) string {
 func exportUsage(fs *flag.FlagSet) {
 	fmt.Printf(`%s export: Export a OpenVPN server or client configuration
 
-Usage: %s DB export [options] name
+Usage: %s DB export [options] CN
 
-Where 'DB' is the CA Database file and 'NAME' is the CommonName of the
+Where 'DB' is the CA Database file and 'CN' is the CommonName of the
 server or client configuration to be exported.
 
 Options:

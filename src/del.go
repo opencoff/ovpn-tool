@@ -57,7 +57,7 @@ func delUsage(fs *flag.FlagSet) {
 
 Usage: %s DB delete [options] CN [CN...]
 
-Where 'DB' is the CA Database file name and 'CN' is the CommonName for the server
+Where 'DB' is the CA Database file name and 'CN' is one or more user names to delete.
 
 Options:
 `, os.Args[0], os.Args[0])

@@ -66,8 +66,9 @@ func ListCert(db string, args []string) {
 
 func printcert(c *pki.Cert) {
 	var pref string
-	now := time.Now().UTC()
 	z := c.Crt
+
+	now := time.Now().UTC()
 	if now.After(z.NotAfter) {
 		pref = fmt.Sprintf("EXPIRED %s", z.NotAfter)
 	} else {
@@ -81,9 +82,9 @@ func printcert(c *pki.Cert) {
 func listUsage(fs *flag.FlagSet) {
 	fmt.Printf(`%s list: List one or more issued certificates
 
-Usage: %s DB list [options] [NUM...]
+Usage: %s DB list [options] [CN...]
 
-Where 'DB' is the CA Database file and 'NUM' is zero or more certificate serial numbers.
+Where 'DB' is the CA Database file and 'CN' is common name in the certificate.
 
 Options:
 `, os.Args[0], os.Args[0])

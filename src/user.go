@@ -86,7 +86,8 @@ func userUsage(fs *flag.FlagSet) {
 
 Usage: %s DB user [options] CN
 
-Where 'DB' is the CA Database file name and 'CN' is the CommonName for the server
+Where 'DB' is the CA Database file name and 'CN' is the CommonName for the user.
+It is useful to use the user's email address as their common name.
 
 Options:
 `, os.Args[0], os.Args[0])

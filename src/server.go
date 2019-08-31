@@ -78,7 +78,7 @@ func ServerCert(db string, args []string) {
 
 	args = fs.Args()
 	if len(args) < 1 {
-		warn("Insufficient arguments to 'init'\n")
+		warn("Insufficient arguments to 'server'\n")
 		fs.Usage()
 	}
 
@@ -134,7 +134,7 @@ func serverUsage(fs *flag.FlagSet) {
 
 Usage: %s DB server [options] CN
 
-Where 'DB' is the CA Database file name and 'CN' is the CommonName for the server
+Where 'DB' is the CA Database file name and 'CN' is the CommonName for the server.
 
 Options:
 `, os.Args[0], os.Args[0])
