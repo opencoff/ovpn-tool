@@ -39,7 +39,7 @@ const (
 // Argon2 KDF
 func kdf(pwd []byte, salt []byte) []byte {
 	// Generate a 32-byte AES-256 key
-	return argon2.IDKey(pwd, salt, _Time, _Mem, _Threads, 64)
+	return argon2.IDKey(pwd, salt, _Time, _Mem, _Threads, 32)
 }
 
 // expand a user password string and derive a 32 byte key

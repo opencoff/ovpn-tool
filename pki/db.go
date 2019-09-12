@@ -11,7 +11,14 @@ package pki
 // Internal details:
 //
 // * All data written to the db is encrypted with a key derived from a
-//   user supplied passphrase
+//   random 32-byte key.
+// * This DB key is stored in an encrypted form in the DB; it is encrypted
+//   with a user supplied passphrase:
+//     dbkey = randbytes(32)
+//     expanded = SHA512(passphrase)
+//     kek = KDF(expanded, salt)
+//     esk = kek ^ dbkey
+//
 // * Updating serial#: anytime a user cert or a server cert is written,
 //   we update the serial number at the same time. We also update serial
 //   number when CA is created for the first time.
@@ -36,12 +43,12 @@ import (
 )
 
 type database struct {
-	db  *bolt.DB
-	pwd  []byte  // expanded 64 byte passphrase
+	db   *bolt.DB
+	pwd  []byte // expanded 64 byte passphrase
 	salt []byte // KDF salt
 
 	// set to true if CA has been initialized
-	ca bool
+	initialized bool
 }
 
 type cadata struct {
@@ -80,9 +87,11 @@ func newDB(fn string, pw string, creat bool) (*database, error) {
 
 	h := sha512.New()
 	h.Write([]byte(pw))
-	pwd := h.Sum(nil)
+	expanded := h.Sum(nil)
 
 	var salt []byte
+
+	pwd := make([]byte, 32)
 
 	// initialize key buckets
 	err = db.Update(func(tx *bolt.Tx) error {
@@ -106,33 +115,57 @@ func newDB(fn string, pw string, creat bool) (*database, error) {
 			return fmt.Errorf("%s: can't create ca bucket: %s", fn, err)
 		}
 
-
 		skey := []byte("salt")
 		ckey := []byte("check")
+		pkey := []byte("ekey")
 
 		salt = b.Get(skey)
 		chk := b.Get(ckey)
-		if salt == nil || chk == nil {
-			var s [32]byte
+		ekey := b.Get(pkey)
+		if salt == nil || chk == nil || ekey == nil ||
+			len(ekey) != 32 || len(chk) != 32 || len(salt) != 32 {
 
-			// initialize the DB salt
-			randsalt(s[:])
-			salt = s[:]
-			pwd = kdf(pwd, s[:])
-			chk = hash(pwd)
+			salt = make([]byte, 32)
 
-			b.Put(skey, s[:])
+			// generate a random DB key and encrypt it with the user supplied key
+			randsalt(pwd)
+
+			// initialize the DB salt and derive a KEK
+			randsalt(salt)
+			kek := kdf(expanded, salt)
+
+			var ekey [32]byte
+			for i := 0; i < 32; i++ {
+				ekey[i] = kek[i] ^ pwd[i]
+			}
+
+			h := sha256.New()
+			h.Write(salt)
+			h.Write(kek)
+			chk = h.Sum(nil)
+
+			b.Put(skey, salt)
 			b.Put(ckey, chk)
+			b.Put(pkey, ekey[:])
 
 			return nil
 		}
 
 		// This may be an initialized DB. Lets verify it.
-		pwd = kdf(pwd, salt)
-		vrfy := hash(pwd)
+		kek := kdf(expanded, salt)
+
+		h := sha256.New()
+		h.Write(salt)
+		h.Write(kek)
+		vrfy := h.Sum(nil)
 
 		if subtle.ConstantTimeCompare(chk, vrfy) != 1 {
-			return fmt.Errorf("%s: incorrect password", fn)
+			return fmt.Errorf("%s: wrong password", fn)
+		}
+
+		// finally decode the encrypted DB key
+		for i := 0; i < 32; i++ {
+			pwd[i] = ekey[i] ^ kek[i]
 		}
 
 		return nil
@@ -152,11 +185,51 @@ func newDB(fn string, pw string, creat bool) (*database, error) {
 }
 
 func (d *database) close() error {
+	// wipe the keys
+	for i := 0; i < 32; i++ {
+		d.pwd[i] = 0
+	}
 	return d.db.Close()
 }
 
+// Rekey a database with a new user supplied password
+func (d *database) Rekey(newpw string) error {
+	h := sha512.New()
+	h.Write([]byte(newpw))
+	newpwd := h.Sum(nil)
+
+	// initialize key buckets
+	err := d.db.Update(func(tx *bolt.Tx) error {
+		b := tx.Bucket([]byte("config"))
+		if b == nil {
+			return fmt.Errorf("can't find config bucket")
+		}
+
+		ckey := []byte("check")
+		pkey := []byte("ekey")
+
+		// New KEK
+		kek := kdf(newpwd, d.salt)
+
+		h := sha256.New()
+		h.Write(d.salt)
+		h.Write(kek)
+		chk := h.Sum(nil)
+
+		var ekey [32]byte
+		for i := 0; i < 32; i++ {
+			ekey[i] = kek[i] ^ d.pwd[i]
+		}
+
+		b.Put(ckey, chk)
+		b.Put(pkey, ekey[:])
+		return nil
+	})
+	return err
+}
+
 // Return an initialized ca info
-func (d *database) getCA(pw string) (*cadata, error) {
+func (d *database) getCA() (*cadata, error) {
 	var c *cadata
 
 	err := d.db.View(func(tx *bolt.Tx) error {
@@ -186,6 +259,7 @@ func (d *database) getCA(pw string) (*cadata, error) {
 			return err
 		}
 
+		pw := fmt.Sprintf("%x", d.pwd)
 		err = ck.decryptKey(ck.Rawkey, pw)
 		if err != nil {
 			return err
@@ -196,7 +270,7 @@ func (d *database) getCA(pw string) (*cadata, error) {
 			serial: big.NewInt(0).SetBytes(sn),
 		}
 
-		d.ca = true
+		d.initialized = true
 		return nil
 	})
 
@@ -238,7 +312,7 @@ func (c *Cert) decryptKey(key []byte, pw string) error {
 		pass := []byte(pw)
 		der, err = x509.DecryptPEMBlock(blk, pass)
 		if err != nil {
-			return fmt.Errorf("can't decrypt private key: %s", err)
+			return fmt.Errorf("can't decrypt private key (pw=%s): %s", pw, err)
 		}
 	}
 
@@ -308,11 +382,12 @@ func (c *Cert) marshal(pw string) ([]byte, error) {
 
 // marshal and write the CA to disk
 // Also update the serial#
-func (d *database) putCA(ca *cadata, pw string) error {
-	if d.ca {
+func (d *database) putCA(ca *cadata) error {
+	if d.initialized {
 		return fmt.Errorf("CA already initialized")
 	}
 
+	pw := fmt.Sprintf("%x", d.pwd)
 	b, err := ca.Cert.marshal(pw)
 	if err != nil {
 		return err

@@ -59,7 +59,7 @@ func initCA(dbfile string, args []string, init bool) *pki.CA {
 		cn = args[0]
 		creat = true
 
-		pw, err = utils.Askpass("Enter password for CA private key", true)
+		pw, err = utils.Askpass("Enter password for DB", true)
 		if err != nil {
 			die("%s", err)
 		}
@@ -70,7 +70,7 @@ func initCA(dbfile string, args []string, init bool) *pki.CA {
 		}
 
 		// we only ask _once_
-		pw, err = utils.Askpass("Enter password for CA private key", false)
+		pw, err = utils.Askpass("Enter password for DB", false)
 		if err != nil {
 			die("%s", err)
 		}

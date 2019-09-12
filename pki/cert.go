@@ -105,7 +105,7 @@ func NewCA(p *CAparams) (*CA, error) {
 		return nil, err
 	}
 
-	cd, err := d.getCA(p.Passwd)
+	cd, err := d.getCA()
 	if err != nil {
 		return nil, err
 	}
@@ -153,6 +153,11 @@ func (ca *CA) Close() error {
 	ca.serial = nil
 
 	return nil
+}
+
+// Rekey the DB password
+func (ca *CA) RekeyDB(newpw string) error {
+	return ca.db.Rekey(newpw)
 }
 
 // Find a given cn and return the corresponding cert
@@ -357,7 +362,7 @@ func createCA(p *CAparams, db *database) (*CA, error) {
 		serial: big.NewInt(0).Set(cert.SerialNumber),
 	}
 
-	err = db.putCA(z, p.Passwd)
+	err = db.putCA(z)
 	if err != nil {
 		return nil, err
 	}

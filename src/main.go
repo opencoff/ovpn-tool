@@ -35,13 +35,14 @@ Usage: %s [options] DB CMD [args..]
 
 Where 'DB' points to the certificate database, and 'CMD' is one of:
 
-    init              Initialize a new CA and cert store
-    server            Create a new server certificate
-    list, show        List one or all certificates in the DB
-    export            Export a OpenVPN server or client configuration
-    delete	      Delete a user and revoke their certificate
-    user, client      Create a new user/client certificate
-    crl		      List revoked certificates or generate CRL
+    init           Initialize a new CA and cert store
+    server         Create a new server certificate
+    list, show     List one or all certificates in the DB
+    export         Export a OpenVPN server or client configuration
+    delete         Delete a user and revoke their certificate
+    user, client   Create a new user/client certificate
+    crl            List revoked certificates or generate CRL
+    passwd         Change the DB encryption password
 
 Options:
 `, path.Base(os.Args[0]), os.Args[0])
@@ -74,6 +75,7 @@ Options:
 		"show":   ListCert,
 		"list":   ListCert,
 		"crl":    ListCRL,
+		"passwd": ChangePasswd,
 	}
 	// handle the common case of people forgetting the DB
 	cmd := strings.ToLower(db)

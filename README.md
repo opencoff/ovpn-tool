@@ -66,7 +66,7 @@ Where:
   [boltdb](https://github.com/etcd/bbolt) instance.
 
 * *CMD* is a command - one of `init`, `server`, `client`, `export`,
-  `list`, `delete`, `crl`.
+  `list`, `delete`, `crl`, `passwd`.
 
 The tool writes the certificates, keys into an encrypted boltdb instance.
 
@@ -214,6 +214,14 @@ You can export the default client configuration template like so:
 
     $ ovpn-tool foo.db export --print-client-template > c.template
 
+### Replacing the user passphrase on a DB
+If you desire to change the DB passphrase, you can do so with the
+`passwd` command:
+
+    $ ovpn-tool foo.db passwd
+
+This merely changes the way the encrypted DB key is stored on disk.
+
 ## Template variables available for customization
 The following template parameters are available for use in your
 custom configuration templates:
@@ -257,20 +265,33 @@ The code is organized as a library & command line frontend for that library.
 
 * Database encryption:
     * User passphrase is first expanded to 64 bytes by hashing it via SHA-512.
-    * Every database instance has a 32-byte random salt associated with it. This
-      salt is used along with the expanded passphrase above as inputs to the Argon2i
-      KDF. The resulting output is 64-bytes of strong password.
-    * The KDF parameters are hardcoded in `db.go`;
+    * The DB is associated with a random 32-byte encryption key and a random 32-byte
+      salt. This key is protected with a Key-encryption-key (KEK) derived from
+      the expanded passphrase.
+    * The salt and expanded passphrase are fed into Argon2i to derive the KEK.
+    * The DB encryption key is stored on disk as XOR of the KEK; a SHA256 checksum
+      of the salt and KEK is stored alongside to verify that the user supplied
+      passphrase is valid.
+    * In pseudo code, the above looks like so:
+
+	  expanded  = SHA512(passphrase)
+	  salt      = randombytes(32)
+	  dbkey     = randombytes(32)
+	  kek	    = KDF(expanded, salt)
+	  enc_dbkey = dbkey ^ kek
+	  checksum  = SHA256(salt, kek)
+
+    * The KDF parameters are hardcoded in `cipher.go`;
       it is currently `Time = 1`, `Mem = 1048576`, and `Threads = 8`.
-    * Database keys are entangled with the expanded passphrase and the DB salt via
-      HMAC-SHA256. We don't use any kind of AEAD here because we need a quick and easy way
-      to map user CN's to actual keys. See how `d.key()` is used in *db.go*.
     * Database entries are individually encrypted in AEAD (AES-256-GCM) mode.
-      The AEAD nonce size is 32 bytes (instead of the golang default
-      of 12 bytes).
+      The AEAD nonce size is 32 bytes (instead of the golang default of 12 bytes).
     * Each AEAD encrypt instance uses a separate salt and key extracted via HKDF.
     * The HKDF salt is hashed via SHA256 and used as the AEAD nonce.
     * The HKDF salt is used as additional data in the AEAD construction.
+    * Database bucket keys are entangled with the expanded passphrase and the DB
+      salt via HMAC-SHA256. We don't use any kind of AEAD here because we need a
+      quick and easy way to map user CN's to actual keys.  See how `d.key()` is
+      used in *db.go*.
 
 ## Guide to Source Code
 * `pki/`: PKI abstraction - includes database storage, marshaling/unmarshaling etc.
