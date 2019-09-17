@@ -35,8 +35,6 @@ type CA struct {
 	serial  *big.Int
 
 	db *database
-
-	passwd string
 }
 
 // Cert represents a client or server certificate
@@ -127,7 +125,6 @@ func NewCA(p *CAparams) (*CA, error) {
 		Crt:     cd.Crt,
 		db:      d,
 		privKey: cd.Key,
-		passwd:  p.Passwd,
 		serial:  cd.serial,
 	}
 
@@ -371,7 +368,6 @@ func createCA(p *CAparams, db *database) (*CA, error) {
 		Crt:     cert,
 		db:      db,
 		privKey: eckey,
-		passwd:  p.Passwd,
 		serial:  z.serial,
 	}
 
