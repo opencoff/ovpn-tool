@@ -273,13 +273,15 @@ The code is organized as a library & command line frontend for that library.
       of the salt and KEK is stored alongside to verify that the user supplied
       passphrase is valid.
     * In pseudo code, the above looks like so:
+      ```python
 
-	  expanded  = SHA512(passphrase)
-	  salt      = randombytes(32)
-	  dbkey     = randombytes(32)
-	  kek	    = KDF(expanded, salt)
-	  enc_dbkey = dbkey ^ kek
-	  checksum  = SHA256(salt, kek)
+          expanded  = SHA512(passphrase)
+          salt      = randombytes(32)
+          dbkey     = randombytes(32)
+          kek       = KDF(expanded, salt)
+          enc_dbkey = dbkey ^ kek
+          checksum  = SHA256(salt, kek)
+      ```
 
     * The KDF parameters are hardcoded in `cipher.go`;
       it is currently `Time = 1`, `Mem = 1048576`, and `Threads = 8`.
