@@ -71,7 +71,7 @@ func newDB(fn string, pw string, creat bool) (*database, error) {
 			return nil, fmt.Errorf("%s: not a regular file", fn)
 		}
 	} else if !creat {
-		return nil, fmt.Errorf("Can't open DB %s", fn)
+		return nil, fmt.Errorf("can't open DB %s", fn)
 	}
 
 	dbdir := path.Dir(fn)
@@ -424,15 +424,6 @@ func (d *database) putCA(ca *cadata) error {
 	return err
 }
 
-// Return either server or user
-func (d *database) getcn(cn string) (*Cert, error) {
-	if s, err := d.getsrv(cn); err == nil {
-		return s, nil
-	}
-
-	return d.getuser(cn)
-}
-
 // return a server or user cert
 func (d *database) getcert(cn string, table string) (*Cert, error) {
 	var c *Cert
@@ -458,6 +449,10 @@ func (d *database) getcert(cn string, table string) (*Cert, error) {
 		c, err = decodeCert(cn, ub)
 		if err != nil {
 			return err
+		}
+
+		if table == "server" {
+			c.IsServer = true
 		}
 
 		return nil
@@ -649,12 +644,16 @@ func (d *database) mapcert(table string, fp func(c *Cert)) error {
 				return fmt.Errorf("can't decrypt cert info: %s", err)
 			}
 
-			ck, err := decodeCert("$cert", v)
+			c, err := decodeCert("$cert", v)
 			if err != nil {
 				return err
 			}
+			if table == "server" {
+				c.IsServer = true
+			}
 
-			fp(ck)
+
+			fp(c)
 			return nil
 		})
 

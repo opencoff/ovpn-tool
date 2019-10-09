@@ -16,6 +16,7 @@ import (
 	"strings"
 
 	"github.com/opencoff/ovpn-tool/pki"
+	"github.com/opencoff/go-utils"
 	flag "github.com/opencoff/pflag"
 )
 
@@ -65,6 +66,19 @@ Options:
 
 	db := args[0]
 
+	// handle the common case of people forgetting the DB
+	switch strings.ToLower(db) {
+	case "help", "hel", "he":
+		flag.Usage()
+		os.Exit(1)
+	default:
+	}
+
+	args = args[1:]
+	if len(args) < 1 {
+		die("Insufficient arguments; missing command!\nTry '%s -h'\n", os.Args[0])
+	}
+
 	var cmds = map[string]func(string, []string){
 		"init":   InitCmd,
 		"server": ServerCert,
@@ -77,20 +91,25 @@ Options:
 		"crl":    ListCRL,
 		"passwd": ChangePasswd,
 	}
-	// handle the common case of people forgetting the DB
-	cmd := strings.ToLower(db)
-	if _, ok := cmds[cmd]; ok {
-		flag.Usage()
-		os.Exit(1)
-	}
 
-	cmd = strings.ToLower(args[1])
-	fp, ok := cmds[cmd]
+	words := make([]string, len(cmds))
+	for k := range cmds {
+		words = append(words, k)
+	}
+	ab := utils.Abbrev(words)
+
+	cmd := strings.ToLower(args[0])
+	canon, ok := ab[cmd]
 	if !ok {
-		die("unknown command '%s'", cmd)
+		die("unknown command '%s'; Try '%s --help'", cmd, os.Args[0])
 	}
 
-	fp(db, args[2:])
+	fp, ok := cmds[canon]
+	if !ok {
+		die("can't map command '%s'", canon)
+	}
+
+	fp(db, args[1:])
 }
 
 type Cert x509.Certificate

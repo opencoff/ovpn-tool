@@ -306,7 +306,7 @@ func CertificateText(cert *x509.Certificate) (string, error) {
 	// Issuer/Subject Unique ID, typically used in old v2 certificates
 	issuerUID, subjectUID, err := certUniqueIDs(cert.RawTBSCertificate)
 	if err != nil {
-		return "", errors.New(fmt.Sprintf("certinfo: Error parsing TBS unique attributes: %s\n", err.Error()))
+		return "", fmt.Errorf("certinfo: Error parsing TBS unique attributes: %s", err.Error())
 	}
 	if len(issuerUID) > 0 {
 		buf.WriteString(fmt.Sprintf("%8sIssuer Unique ID: %02x", "", issuerUID[0]))

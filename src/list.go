@@ -65,7 +65,7 @@ func ListCert(db string, args []string) {
 }
 
 func printcert(c *pki.Cert) {
-	var pref string
+	var pref, server string
 	z := c.Crt
 
 	now := time.Now().UTC()
@@ -75,7 +75,11 @@ func printcert(c *pki.Cert) {
 		pref = fmt.Sprintf("valid until %s", z.NotAfter)
 	}
 
-	fmt.Printf("%-16s  %#x (%s)\n", z.Subject.CommonName, z.SerialNumber, pref)
+	if c.IsServer {
+		server = "server"
+	}
+	
+	fmt.Printf("%-16s  %7.7s %#x (%s)\n", z.Subject.CommonName, server, z.SerialNumber, pref)
 	Print("%s\n", Cert(*z))
 }
 

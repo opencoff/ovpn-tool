@@ -43,6 +43,8 @@ type Cert struct {
 	Key    *ecdsa.PrivateKey
 	Rawkey []byte
 
+	IsServer bool
+
 	// Additional info provided when cert was created
 	Additional []byte
 }
@@ -111,7 +113,7 @@ func NewCA(p *CAparams) (*CA, error) {
 	// If no CA, then we create if needed
 	if cd == nil {
 		if len(p.Subject.CommonName) == 0 {
-			return nil, fmt.Errorf("CA CommonName cannot be empty!")
+			return nil, fmt.Errorf("CA CommonName cannot be empty")
 		}
 
 		if !p.CreateIfMissing {
@@ -207,7 +209,7 @@ func (ca *CA) MapRevoked(fp func(t time.Time, z *x509.Certificate)) error {
 // Generate and return a new server certificate
 func (ca *CA) NewServerCert(ci *CertInfo, pw string) (*Cert, error) {
 	if len(ci.IPAddress) == 0 && len(ci.DNSNames) == 0 {
-		return nil, fmt.Errorf("Server IP/Hostname can't be empty")
+		return nil, fmt.Errorf("server IP/Hostname can't be empty")
 	}
 
 	if _, err := ca.db.getsrv(ci.Subject.CommonName); err == nil {
@@ -269,6 +271,9 @@ func (ca *CA) crl(validity int) ([]byte, error) {
 
 		rv = append(rv, r)
 	})
+	if err != nil {
+		return nil, err
+	}
 
 	now := time.Now().UTC()
 	exp := now.Add(time.Duration(validity) * 24 * time.Hour)

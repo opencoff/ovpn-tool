@@ -42,14 +42,6 @@ func kdf(pwd []byte, salt []byte) []byte {
 	return argon2.IDKey(pwd, salt, _Time, _Mem, _Threads, 32)
 }
 
-// expand a user password string and derive a 32 byte key
-func kdfstr(pw string, salt []byte) []byte {
-	h := sha512.New()
-	h.Write([]byte(pw))
-	pwd := h.Sum(nil)
-	return kdf(pwd, salt)
-}
-
 // Expand a strong KDF derived key into a 32 byte cipher key
 func expand(pwd, salt []byte) []byte {
 	var buf [32]byte // AES-256 key
