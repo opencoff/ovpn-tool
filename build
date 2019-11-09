@@ -352,7 +352,7 @@ case $Tool in
             all="$@"
         fi
 
-        echo "Building $rev, $cross $msg .."
+        echo "Building $Prodver ($rev), $cross $msg .."
 
         for p in $all; do 
             if echo $p | grep -q ':' ; then
