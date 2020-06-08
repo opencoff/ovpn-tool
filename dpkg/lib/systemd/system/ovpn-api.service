@@ -1,0 +1,12 @@
+[Unit]
+Description=OpenVPN Tool API
+After=network-online.target
+
+[Service]
+EnvironmentFile=/etc/default/ovpn-api
+ExecStart=/usr/bin/ovpn-api -t ${TOOLPATH} -a ${ADDR} -db ${DB} -d ${DN} -s ${VPNSUBNET} -gw ${GATEWAY} -ccd ${CCDPATH} -crl ${SERVERCRL} -pw ${PW_FILE}
+Restart=always
+TimeoutStartSec=5
+
+[Install]
+WantedBy=multi-user.target

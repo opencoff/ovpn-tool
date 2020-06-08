@@ -12,3 +12,6 @@
 *.out
 .*sw?
 bin/*
+
+*.deb
+dpkg/usr/bin/*
