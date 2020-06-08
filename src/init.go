@@ -11,6 +11,7 @@ package main
 import (
 	"crypto/x509/pkix"
 	"fmt"
+	"io/ioutil"
 	"os"
 	"time"
 
@@ -55,24 +56,32 @@ func initCA(dbfile string, args []string, init bool) *pki.CA {
 	var pw string
 
 	args = fs.Args()
-	if len(args) > 0 {
-		cn = args[0]
-		creat = true
-
-		pw, err = utils.Askpass("Enter password for DB", true)
+	if os.Getenv("PASSWD_FILE") != "" {
+		data, err := ioutil.ReadFile(os.Getenv("PASSWD_FILE"))
 		if err != nil {
 			die("%s", err)
 		}
+		pw = string(data)
 	} else {
-		if init {
-			fs.Usage()
-			os.Exit(1)
-		}
+		if len(args) > 0 {
+			cn = args[0]
+			creat = true
 
-		// we only ask _once_
-		pw, err = utils.Askpass("Enter password for DB", false)
-		if err != nil {
-			die("%s", err)
+			pw, err = utils.Askpass("Enter password for DB", true)
+			if err != nil {
+				die("%s", err)
+			}
+		} else {
+			if init {
+				fs.Usage()
+				os.Exit(1)
+			}
+
+			// we only ask _once_
+			pw, err = utils.Askpass("Enter password for DB", false)
+			if err != nil {
+				die("%s", err)
+			}
 		}
 	}
 
