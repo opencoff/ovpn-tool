@@ -1,0 +1,25 @@
+
+
+###
+
+GET http://127.0.0.1:5555/client_ips HTTP/1.1
+
+###
+
+GET http://127.0.0.1:5555/clients HTTP/1.1
+
+###
+
+GET http://127.0.0.1:5555/client/meme HTTP/1.1
+
+###
+
+GET http://127.0.0.1:5555/client/meme/config HTTP/1.1
+
+###
+
+POST http://127.0.0.1:5555/client/meme HTTP/1.1
+
+###
+
+DELETE http://127.0.0.1:5555/client/meme HTTP/1.1
