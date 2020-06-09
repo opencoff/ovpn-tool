@@ -9,14 +9,21 @@ import (
 	"strings"
 )
 
-func getExpiry(data []byte, err error) (string, error) {
+//meme                      0x2add4c4b1f559973fef06acb253694d9d (valid until 2022-06-09 12:40:48 +0000 UTC)
+func getExpiry(data []byte, err error) (string, string, string, error) {
 	if err != nil {
-		return "", err
+		return "", "", "", err
 	}
+
 	bits := strings.Split(string(data), "(")
-	validUntil := strings.Split(bits[3], ")")[0]
+	cnFp := strings.Split(strings.TrimSpace(bits[0]), " ")
+
+	cn := cnFp[0]
+	fingerprint := cnFp[len(cnFp)-1]
+	validUntil := strings.Split(bits[1], ")")[0]
 	bits = strings.Split(validUntil, " ")
-	return fmt.Sprintf("%sT%sZ", bits[3], bits[4]), nil
+	date := fmt.Sprintf("%sT%sZ", bits[2], bits[3])
+	return cn, fingerprint, date, nil
 }
 
 func cidrHosts(cidr string) ([]string, error) {
@@ -29,8 +36,8 @@ func cidrHosts(cidr string) ([]string, error) {
 	for ip := ip.Mask(ipnet.Mask); ipnet.Contains(ip); inc(ip) {
 		ips = append(ips, ip.String())
 	}
-	// remove network address and broadcast address
-	return ips[1 : len(ips)-1], nil
+	// remove network address, broadcast and gateway address
+	return ips[2 : len(ips)-1], nil
 }
 
 func nextAvailableIP(available, taken []string) string {
@@ -70,6 +77,15 @@ func (ccd CCD) delete(cn string) error {
 	return os.Remove(filepath.Join(ccd.path, cn))
 }
 
+func (ccd CCD) readIP(cn string) (string, error) {
+	data, err := ccd.read(cn)
+	if err != nil {
+		return "", err
+	}
+
+	return strings.Split(data, " ")[1], nil
+}
+
 func (ccd CCD) read(cn string) (string, error) {
 	data, err := ioutil.ReadFile(filepath.Join(ccd.path, cn))
 	return string(data), err
@@ -81,18 +97,18 @@ func (ccd CCD) writeNextStaticIP(cn string) error {
 
 func (ccd CCD) writeStaticIP(cn, ip string) error {
 	data := fmt.Sprintf("ifconfig-push %s %s", ip, ccd.gatewayIP)
-	return ioutil.WriteFile(filepath.Join(ccd.path, cn), []byte(data), 600)
+	return ioutil.WriteFile(filepath.Join(ccd.path, cn), []byte(data), 0600)
 }
 
 func (ccd CCD) currentIPMap() map[string]string {
 	ips := map[string]string{}
 	matches, _ := filepath.Glob(filepath.Join(ccd.path, "*"))
 	for _, fn := range matches {
-		data, err := ioutil.ReadFile(fn)
+		ip, err := ccd.readIP(filepath.Base(fn))
 		if err != nil {
 			continue
 		}
-		ips[filepath.Base(fn)] = strings.Split(string(data), " ")[2]
+		ips[filepath.Base(fn)] = ip
 	}
 
 	return ips
@@ -102,11 +118,11 @@ func (ccd CCD) currentIPs() []string {
 	ips := []string{}
 	matches, _ := filepath.Glob(filepath.Join(ccd.path, "*"))
 	for _, fn := range matches {
-		data, err := ioutil.ReadFile(fn)
+		ip, err := ccd.readIP(filepath.Base(fn))
 		if err != nil {
 			continue
 		}
-		ips = append(ips, strings.Split(string(data), " ")[2])
+		ips = append(ips, ip)
 	}
 
 	return ips
