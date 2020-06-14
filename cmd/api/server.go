@@ -157,6 +157,8 @@ func (svr *server) CreateClient(c *gin.Context) {
 		return
 	}
 
+	data = append([]byte("# fingerprint="+fingerprint+"\n"), data...)
+
 	c.JSON(200, map[string]string{
 		"ip":          ip,
 		"fingerprint": fingerprint,
