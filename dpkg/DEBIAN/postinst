@@ -1,0 +1,15 @@
+#!/bin/bash
+
+[[ ! -f /etc/default/ovpn-api ]] && cat <<EOF > /etc/default/ovpn-api
+TOOLPATH="/usr/bin/ovpn-tool"
+ADDR="127.0.0.1:5555"
+DB="/var/lib/ovpn-tool/certs.db"
+DN="vpn.example.com"
+VPNSUBNET="10.0.43.0/16"
+GATEWAY="10.0.43.1"
+CCDPATH="/etc/openvpn/ccd"
+SERVERCRL="/etc/openvpn/crl.pem"
+PW_FILE="/var/lib/ovpn-tool/pw"
+EOF
+
+exit 0;

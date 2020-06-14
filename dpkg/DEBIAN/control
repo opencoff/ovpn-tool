@@ -1,0 +1,13 @@
+Package: ovpn-tool
+Version: 0.7.1-4-ge6326af
+Section: misc
+Priority: optional
+Architecture: all
+Maintainer: Robert McLeod <robert@penguinpower.co.nz>
+Essential: no
+Homepage: http://example.com
+Installed-Size: 19810
+Description: Tool for managing the OpenVPN service
+  Command line tool to help with setting up and administering an
+  OpenVPN server.  Also includes an API service to help with
+  granting/revoking OpenVPN client certs.
