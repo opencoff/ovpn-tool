@@ -45,7 +45,6 @@ func initCA(dbfile string, args []string, init bool) *pki.CA {
 	fs.StringVarP(&org, "organization", "O", "", "Use `O` as the organization name")
 	fs.StringVarP(&ou, "organization-unit", "u", "", "Use `U` as the organization unit name")
 	fs.UintVarP(&yrs, "validity", "V", 5, "Issue CA root cert with `N` years validity")
-
 	err := fs.Parse(args)
 	if err != nil {
 		die("%s", err)
@@ -56,7 +55,7 @@ func initCA(dbfile string, args []string, init bool) *pki.CA {
 	var pw string
 
 	args = fs.Args()
-	if os.Getenv("PASSWD_FILE") != "" {
+	if !init && os.Getenv("PASSWD_FILE") != "" {
 		data, err := ioutil.ReadFile(os.Getenv("PASSWD_FILE"))
 		if err != nil {
 			die("%s", err)
