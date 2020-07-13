@@ -110,6 +110,11 @@ func newDB(fn string, pw string, creat bool) (*database, error) {
 			return fmt.Errorf("%s: can't create revoked bucket: %s", fn, err)
 		}
 
+		_, err = tx.CreateBucketIfNotExists([]byte("ica"))
+		if err != nil {
+			return fmt.Errorf("%s: can't create intermediate ca bucket: %s", fn, err)
+		}
+
 		b, err := tx.CreateBucketIfNotExists([]byte("config"))
 		if err != nil {
 			return fmt.Errorf("%s: can't create ca bucket: %s", fn, err)
@@ -275,6 +280,70 @@ func (d *database) getCA() (*cadata, error) {
 	})
 
 	return c, err
+}
+
+// find and get the intermediate ca
+func (d *database) getIntermediate(cn string) (*Cert, error) {
+	var ck *Cert
+
+	err := d.db.View(func(tx *bolt.Tx) error {
+		bc := tx.Bucket([]byte("ica"))
+		if bc == nil {
+			return fmt.Errorf("can't find ica bucket")
+		}
+
+		rgb := bc.Get(d.key(cn))
+		if rgb == nil {
+			return ErrNotFound
+		}
+
+		gb, err := d.decrypt(rgb)
+		if err != nil {
+			return fmt.Errorf("can't decrypt ica %s: %s", cn, err)
+		}
+
+		ck, err = decodeCert(cn, gb)
+		if err != nil {
+			return err
+		}
+
+		pw := fmt.Sprintf("%x", d.pwd)
+		err = ck.decryptKey(ck.Rawkey, pw)
+		return err
+	})
+
+	return ck, err
+}
+
+// find and get the intermediate ca
+func (d *database) putIntermediate(c *Cert) error {
+	pw := fmt.Sprintf("%x", d.pwd)
+	b, err := c.marshal(pw)
+	if err != nil {
+		return err
+	}
+
+	eb, err := d.encrypt(b)
+	if err != nil {
+		return fmt.Errorf("can't encrypt intermediate ca: %s", err)
+	}
+
+	cn := c.Crt.Subject.CommonName
+	err = d.db.Update(func(tx *bolt.Tx) error {
+		bc := tx.Bucket([]byte("ica"))
+		if bc == nil {
+			return fmt.Errorf("can't find config bucket")
+		}
+
+		err := bc.Put(d.key(cn), eb)
+		if err != nil {
+			return err
+		}
+
+		return nil
+	})
+
+	return err
 }
 
 // Decode a serialized cert/key pair
@@ -582,13 +651,42 @@ func (d *database) deluser(cn string) error {
 }
 
 // iterators for server block
-func (d *database) mapSrv(fp func(s *Cert)) error {
+func (d *database) mapSrv(fp func(s *Cert) error) error {
 	return d.mapcert("server", fp)
 }
 
 // iterators for server block
-func (d *database) mapUser(fp func(s *Cert)) error {
+func (d *database) mapUser(fp func(s *Cert) error) error {
 	return d.mapcert("user", fp)
+}
+
+// iterator for CA certs
+func (d *database) mapCA(fp func(s *Cert) error) error {
+	err := d.db.View(func(tx *bolt.Tx) error {
+		bu := tx.Bucket([]byte("ica"))
+		if bu == nil {
+			return fmt.Errorf("can't find ica bucket")
+		}
+
+		err := bu.ForEach(func(k, ev []byte) error {
+			v, err := d.decrypt(ev)
+			if err != nil {
+				return fmt.Errorf("can't decrypt ica cert info: %s", err)
+			}
+
+			c, err := decodeCert("ica-cert", v)
+			if err != nil {
+				return err
+			}
+
+			c.IsCA = true
+			fp(c)
+			return nil
+		})
+
+		return err
+	})
+	return err
 }
 
 // iterators for revoked certs
@@ -631,7 +729,7 @@ func (d *database) mapRevoked(fp func(t time.Time, c *x509.Certificate)) error {
 }
 
 // iterators for user block
-func (d *database) mapcert(table string, fp func(c *Cert)) error {
+func (d *database) mapcert(table string, fp func(c *Cert) error) error {
 	err := d.db.View(func(tx *bolt.Tx) error {
 		bu := tx.Bucket([]byte(table))
 		if bu == nil {
@@ -651,7 +749,6 @@ func (d *database) mapcert(table string, fp func(c *Cert)) error {
 			if table == "server" {
 				c.IsServer = true
 			}
-
 
 			fp(c)
 			return nil

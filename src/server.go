@@ -65,11 +65,13 @@ func ServerCert(db string, args []string) {
 	var dns StringList
 	var ip net.IP
 	var port uint16 = 1194
+	var signer string
 
 	fs.UintVarP(&yrs, "validity", "V", yrs, "Issue server certificate with `N` years validity")
 	fs.VarP(&dns, "dnsname", "d", "Add `M` to list of DNS names for this server")
 	fs.IPVarP(&ip, "ip-address", "i", ip, "Use `S` as the server listening IP address")
 	fs.Uint16VarP(&port, "port", "p", port, "Use `P` as the server listening port number")
+	fs.StringVarP(&signer, "sign-with", "s", "", "Use `S` as the signing CA [root-CA]")
 
 	err := fs.Parse(args)
 	if err != nil {
@@ -108,6 +110,18 @@ func ServerCert(db string, args []string) {
 	}
 
 	ca := OpenCA(db)
+	if len(signer) > 0 {
+		ici := &pki.CertInfo{
+			Subject: ca.Crt.Subject,
+		}
+
+		ici.Subject.CommonName = signer
+		ica, err := ca.NewIntermediateCA(ici)
+		if err != nil {
+			die("can't find signer %s: %s", signer, err)
+		}
+		ca = ica
+	}
 	defer ca.Close()
 
 	ci := &pki.CertInfo{
@@ -117,7 +131,6 @@ func ServerCert(db string, args []string) {
 		IPAddress:  ip,
 		Additional: encA,
 	}
-
 	ci.Subject.CommonName = cn
 
 	// We don't encrypt server certs

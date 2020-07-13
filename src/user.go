@@ -27,10 +27,12 @@ func UserCert(db string, args []string) {
 	var yrs uint = 2
 	var askPw bool
 	var email string
+	var signer string
 
 	fs.UintVarP(&yrs, "validity", "V", yrs, "Issue user certificate with `N` years validity")
 	fs.BoolVarP(&askPw, "password", "p", false, "Ask for a password to protect the user certificate")
 	fs.StringVarP(&email, "email", "e", email, "Use `E` as the user's email address")
+	fs.StringVarP(&signer, "sign-with", "s", "", "Use `S` as the signing CA [root-CA]")
 
 	err := fs.Parse(args)
 	if err != nil {
@@ -42,9 +44,6 @@ func UserCert(db string, args []string) {
 		warn("Insufficient arguments to 'user'\n")
 		fs.Usage()
 	}
-
-	ca := OpenCA(db)
-	defer ca.Close()
 
 	var cn string = args[0]
 	var pw string
@@ -65,12 +64,26 @@ func UserCert(db string, args []string) {
 		}
 	}
 
+	ca := OpenCA(db)
+	if len(signer) > 0 {
+		ici := &pki.CertInfo{
+			Subject: ca.Crt.Subject,
+		}
+
+		ici.Subject.CommonName = signer
+		ica, err := ca.NewIntermediateCA(ici)
+		if err != nil {
+			die("can't find signer %s: %s", signer, err)
+		}
+		ca = ica
+	}
+	defer ca.Close()
+
 	ci := &pki.CertInfo{
 		Subject:        ca.Crt.Subject,
 		Validity:       years(yrs),
 		EmailAddresses: []string{email},
 	}
-
 	ci.Subject.CommonName = cn
 
 	crt, err := ca.NewClientCert(ci, pw)

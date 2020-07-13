@@ -25,6 +25,7 @@ import (
 	"fmt"
 	"math/big"
 	"net"
+	"sync"
 	"time"
 )
 
@@ -32,9 +33,14 @@ import (
 type CA struct {
 	Crt     *x509.Certificate
 	privKey *ecdsa.PrivateKey
-	serial  *big.Int
+	serial  *serialNum
 
 	db *database
+}
+
+type serialNum struct {
+	*big.Int
+	mu sync.Mutex
 }
 
 // Cert represents a client or server certificate
@@ -44,6 +50,7 @@ type Cert struct {
 	Rawkey []byte
 
 	IsServer bool
+	IsCA     bool
 
 	// Additional info provided when cert was created
 	Additional []byte
@@ -69,14 +76,56 @@ type CertInfo struct {
 // The key may be encrypted (if the cert & key were initially protected
 // by a passphrase).
 func (c *Cert) PEM() (crt []byte, key []byte) {
-	p := &pem.Block{
-		Type:  "CERTIFICATE",
-		Bytes: c.Crt.Raw,
+	return PEMEncode(c.Crt), c.Rawkey
+}
+
+// Return the CA chain that is used for signing a given cert
+func (ca *CA) Signers(c *Cert) ([]*x509.Certificate, error) {
+	auth := fmt.Sprintf("%x", c.Crt.AuthorityKeyId)
+	caId := fmt.Sprintf("%x", ca.Crt.SubjectKeyId)
+
+	// we have to find the issuer in the ica bucket
+	// map of SubjectKeyId to the cert
+	m := make(map[string]*x509.Certificate)
+
+	// we always want to find the the root-ca
+	m[caId] = ca.Crt
+	err := ca.db.mapCA(func(s *Cert) error {
+		key := fmt.Sprintf("%x", s.Crt.SubjectKeyId)
+		m[key] = s.Crt
+		return nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("can't walk CA chain: %w", err)
 	}
 
-	crt = pem.EncodeToMemory(p)
-	key = c.Rawkey
-	return
+	// walk the CAs and build the signing chain
+	var z []*x509.Certificate
+	for {
+		s, ok := m[auth]
+		if !ok {
+			return nil, fmt.Errorf("can't find issuer %x", auth)
+		}
+		z = append(z, s)
+		if auth == caId {
+			break
+		}
+
+		// Next iteration: walk up the chain
+		auth = fmt.Sprintf("%x", s.AuthorityKeyId)
+	}
+
+	return z, nil
+}
+
+// PEM Encode a certificate
+func PEMEncode(c *x509.Certificate) []byte {
+	p := &pem.Block{
+		Type:  "CERTIFICATE",
+		Bytes: c.Raw,
+	}
+
+	return pem.EncodeToMemory(p)
 }
 
 // CAparams holds the initial info needed to setup a CA
@@ -127,7 +176,9 @@ func NewCA(p *CAparams) (*CA, error) {
 		Crt:     cd.Crt,
 		db:      d,
 		privKey: cd.Key,
-		serial:  cd.serial,
+		serial: &serialNum{
+			Int: cd.serial,
+		},
 	}
 
 	return ca, nil
@@ -193,12 +244,16 @@ func (ca *CA) DeleteServer(cn string) error {
 }
 
 // Iterate over every cert in the list
-func (ca *CA) MapServers(fp func(c *Cert)) error {
+func (ca *CA) MapServers(fp func(c *Cert) error) error {
 	return ca.db.mapSrv(fp)
 }
 
-func (ca *CA) MapUsers(fp func(c *Cert)) error {
+func (ca *CA) MapUsers(fp func(c *Cert) error) error {
 	return ca.db.mapUser(fp)
+}
+
+func (ca *CA) MapCA(fp func(c *Cert) error) error {
+	return ca.db.mapCA(fp)
 }
 
 // return list of revoked certs
@@ -228,6 +283,22 @@ func (ca *CA) NewClientCert(ci *CertInfo, pw string) (*Cert, error) {
 	}
 
 	return ca.newCert(ci, false, pw)
+}
+
+// Generate a new intermediate CA
+func (ca *CA) NewIntermediateCA(ci *CertInfo) (*CA, error) {
+	cert, err := ca.db.getIntermediate(ci.Subject.CommonName)
+	if err == nil {
+		ica := &CA{
+			Crt:     cert.Crt,
+			privKey: cert.Key,
+			db:      ca.db,
+			serial:  ca.serial,
+		}
+		return ica, nil
+	}
+
+	return ca.newIntermediateCA(ci)
 }
 
 // Return a list of revoked certificates
@@ -283,13 +354,16 @@ func (ca *CA) crl(validity int) ([]byte, error) {
 
 // Generate a new serial# for this CA instance
 func (ca *CA) newSerial() *big.Int {
-	n := big.NewInt(0).Add(ca.serial, big.NewInt(1))
+	ca.serial.mu.Lock()
+	n := big.NewInt(0).Add(ca.serial.Int, big.NewInt(1))
 
-	ca.serial = n
+	ca.serial.Int = n
+
+	ca.serial.mu.Unlock()
 	return n
 }
 
-func newSerial() (*big.Int, error) {
+func newInitialSerial() (*big.Int, error) {
 	min := big.NewInt(1)
 	min.Lsh(min, 127)
 
@@ -312,7 +386,7 @@ func newSerial() (*big.Int, error) {
 // NewCA returns a DER encoded self-signed CA cert and CSR.
 func createCA(p *CAparams, db *database) (*CA, error) {
 	// Serial number
-	serial, err := newSerial()
+	serial, err := newInitialSerial()
 	if err != nil {
 		return nil, err
 	}
@@ -348,7 +422,7 @@ func createCA(p *CAparams, db *database) (*CA, error) {
 	// self-sign the certificate authority
 	der, err := x509.CreateCertificate(rand.Reader, &template, &template, pubkey, eckey)
 	if err != nil {
-		return nil, fmt.Errorf("ca: can't create root cert: %s", err)
+		return nil, fmt.Errorf("ca: can't sign root CA cert: %s", err)
 	}
 
 	cert, err := x509.ParseCertificate(der)
@@ -356,12 +430,15 @@ func createCA(p *CAparams, db *database) (*CA, error) {
 		panic(err)
 	}
 
+	sn := &serialNum{
+		Int: big.NewInt(0).Set(cert.SerialNumber),
+	}
 	z := &cadata{
 		Cert: Cert{
 			Crt: cert,
 			Key: eckey,
 		},
-		serial: big.NewInt(0).Set(cert.SerialNumber),
+		serial: sn.Int,
 	}
 
 	err = db.putCA(z)
@@ -373,10 +450,75 @@ func createCA(p *CAparams, db *database) (*CA, error) {
 		Crt:     cert,
 		db:      db,
 		privKey: eckey,
-		serial:  z.serial,
+		serial:  sn,
 	}
 
 	return ca, nil
+}
+
+func (ca *CA) newIntermediateCA(ci *CertInfo) (*CA, error) {
+	// Serial number
+	serial := ca.newSerial()
+
+	// Generate a EC Private Key
+	eckey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		return nil, fmt.Errorf("inter-ca: can't generate ECC P256 key: %s", err)
+	}
+
+	pubkey := eckey.Public().(*ecdsa.PublicKey)
+	akid := cksum(pubkey)
+
+	now := time.Now().UTC()
+	// Create the request template
+	template := x509.Certificate{
+		SignatureAlgorithm:    x509.ECDSAWithSHA512,
+		PublicKeyAlgorithm:    x509.ECDSA,
+		SerialNumber:          serial,
+		Subject:               ci.Subject,
+		NotBefore:             now.Add(-1 * time.Minute),
+		NotAfter:              now.Add(ci.Validity),
+		BasicConstraintsValid: true,
+		IsCA:                  true,
+
+		SubjectKeyId:   akid,
+		AuthorityKeyId: akid,
+
+		KeyUsage: x509.KeyUsageDigitalSignature | x509.KeyUsageCertSign | x509.KeyUsageCRLSign,
+	}
+
+	if ca.Crt.MaxPathLen > 0 {
+		template.MaxPathLen = ca.Crt.MaxPathLen - 1
+	}
+
+	der, err := x509.CreateCertificate(rand.Reader, &template, ca.Crt, pubkey, ca.privKey)
+	if err != nil {
+		return nil, fmt.Errorf("ca: can't sign intermediate CA cert: %s", err)
+	}
+
+	cert, err := x509.ParseCertificate(der)
+	if err != nil {
+		panic(err)
+	}
+
+	z := &Cert{
+		Crt: cert,
+		Key: eckey,
+	}
+
+	err = ca.db.putIntermediate(z)
+	if err != nil {
+		return nil, err
+	}
+
+	ica := &CA{
+		Crt:     cert,
+		db:      ca.db,
+		privKey: eckey,
+		serial:  ca.serial,
+	}
+
+	return ica, nil
 }
 
 // generate and sign a new certificate for client or server (depending on isServer)
@@ -388,7 +530,6 @@ func (ca *CA) newCert(ci *CertInfo, isServer bool, pw string) (*Cert, error) {
 	}
 
 	var val []byte
-	var keyUsage x509.KeyUsage
 	var extKeyUsage x509.ExtKeyUsage
 	var ipaddrs []net.IP
 
@@ -398,7 +539,6 @@ func (ca *CA) newCert(ci *CertInfo, isServer bool, pw string) (*Cert, error) {
 		if err != nil {
 			return nil, fmt.Errorf("can't marshal nsCertType: %s", err)
 		}
-		keyUsage = x509.KeyUsageDigitalSignature | x509.KeyUsageKeyAgreement | x509.KeyUsageKeyEncipherment
 		extKeyUsage = x509.ExtKeyUsageServerAuth
 	} else {
 
@@ -407,7 +547,6 @@ func (ca *CA) newCert(ci *CertInfo, isServer bool, pw string) (*Cert, error) {
 		if err != nil {
 			return nil, fmt.Errorf("can't marshal nsCertType: %s", err)
 		}
-		keyUsage = x509.KeyUsageDigitalSignature | x509.KeyUsageKeyAgreement
 		extKeyUsage = x509.ExtKeyUsageClientAuth
 	}
 
@@ -434,7 +573,7 @@ func (ca *CA) newCert(ci *CertInfo, isServer bool, pw string) (*Cert, error) {
 		IPAddresses:    ipaddrs,
 		EmailAddresses: ci.EmailAddresses,
 
-		KeyUsage:    keyUsage,
+		KeyUsage:    x509.KeyUsageDigitalSignature | x509.KeyUsageKeyAgreement | x509.KeyUsageKeyEncipherment,
 		ExtKeyUsage: []x509.ExtKeyUsage{extKeyUsage},
 		ExtraExtensions: []pkix.Extension{
 			{

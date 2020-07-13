@@ -15,8 +15,8 @@ import (
 	"path"
 	"strings"
 
-	"github.com/opencoff/ovpn-tool/pki"
 	"github.com/opencoff/go-utils"
+	"github.com/opencoff/ovpn-tool/pki"
 	flag "github.com/opencoff/pflag"
 )
 
@@ -36,14 +36,15 @@ Usage: %s [options] DB CMD [args..]
 
 Where 'DB' points to the certificate database, and 'CMD' is one of:
 
-    init           Initialize a new CA and cert store
-    server         Create a new server certificate
-    list, show     List one or all certificates in the DB
-    export         Export a OpenVPN server or client configuration
-    delete         Delete a user and revoke their certificate
-    user, client   Create a new user/client certificate
-    crl            List revoked certificates or generate CRL
-    passwd         Change the DB encryption password
+    init             Initialize a new CA and cert store
+    intermediate-ca  Create a new intermediate CA
+    server           Create a new server certificate
+    list, show       List one or all certificates in the DB
+    export           Export a OpenVPN server or client configuration
+    delete           Delete a user and revoke their certificate
+    user, client     Create a new user/client certificate
+    crl              List revoked certificates or generate CRL
+    passwd           Change the DB encryption password
 
 Options:
 `, path.Base(os.Args[0]), os.Args[0])
@@ -80,16 +81,17 @@ Options:
 	}
 
 	var cmds = map[string]func(string, []string){
-		"init":   InitCmd,
-		"server": ServerCert,
-		"user":   UserCert,
-		"delete": DelUser,
-		"client": UserCert,
-		"export": ExportCert,
-		"show":   ListCert,
-		"list":   ListCert,
-		"crl":    ListCRL,
-		"passwd": ChangePasswd,
+		"init":            InitCmd,
+		"server":          ServerCert,
+		"user":            UserCert,
+		"delete":          DelUser,
+		"client":          UserCert,
+		"export":          ExportCert,
+		"show":            ListCert,
+		"list":            ListCert,
+		"crl":             ListCRL,
+		"passwd":          ChangePasswd,
+		"intermediate-ca": IntermediateCA,
 	}
 
 	words := make([]string, len(cmds))

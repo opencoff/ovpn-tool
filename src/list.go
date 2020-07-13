@@ -43,12 +43,19 @@ func ListCert(db string, args []string) {
 
 	if len(args) == 0 {
 
-		ca.MapServers(func(c *pki.Cert) {
+		ca.MapCA(func(c *pki.Cert) error {
 			printcert(c)
+			return nil
 		})
 
-		ca.MapUsers(func(c *pki.Cert) {
+		ca.MapServers(func(c *pki.Cert) error {
 			printcert(c)
+			return nil
+		})
+
+		ca.MapUsers(func(c *pki.Cert) error {
+			printcert(c)
+			return nil
 		})
 
 		return
@@ -77,8 +84,10 @@ func printcert(c *pki.Cert) {
 
 	if c.IsServer {
 		server = "server"
+	} else if c.IsCA {
+		server = "CA (I)"
 	}
-	
+
 	fmt.Printf("%-16s  %7.7s %#x (%s)\n", z.Subject.CommonName, server, z.SerialNumber, pref)
 	Print("%s\n", Cert(*z))
 }

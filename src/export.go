@@ -102,7 +102,6 @@ func ExportCert(db string, args []string) {
 	x := &exported{
 		Date: time.Now().UTC().Format(time.RFC1123Z),
 		Tool: toolInfo(),
-		Ca:   string(ca.PEM()),
 		IP:   "0.0.0.0",
 		Port: 1194,
 	}
@@ -111,6 +110,8 @@ func ExportCert(db string, args []string) {
 		if len(template) == 0 {
 			template = ServerTemplate
 		}
+
+		x.fillCA(s, ca)
 		x.exportServer(s, template, out)
 		return
 	}
@@ -120,6 +121,7 @@ func ExportCert(db string, args []string) {
 			template = UserTemplate
 		}
 
+		x.fillCA(c, ca)
 		x.exportUser(c, srv, template, out)
 		return
 	}
@@ -158,6 +160,21 @@ func (x *exported) exportServer(s *pki.Cert, t string, out io.Writer) {
 	if err != nil {
 		die("Can't fill out template: %s", err)
 	}
+}
+
+// Build the CA chain and print it
+func (x *exported) fillCA(s *pki.Cert, ca *pki.CA) {
+	var z strings.Builder
+	caChain, err := ca.Signers(s)
+	if err != nil {
+		die("can't build CA chain for %s: %s", s.Crt.Subject.CommonName, err)
+	}
+	for i := range caChain {
+		x := caChain[i]
+		z.Write(pki.PEMEncode(x))
+	}
+
+	x.Ca = z.String()
 }
 
 func (x *exported) exportUser(c *pki.Cert, srv *pki.Cert, t string, out io.Writer) {
