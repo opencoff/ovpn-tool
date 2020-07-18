@@ -164,17 +164,11 @@ func (x *exported) exportServer(s *pki.Cert, t string, out io.Writer) {
 
 // Build the CA chain and print it
 func (x *exported) fillCA(s *pki.Cert, ca *pki.CA) {
-	var z strings.Builder
 	caChain, err := ca.Signers(s)
 	if err != nil {
 		die("can't build CA chain for %s: %s", s.Crt.Subject.CommonName, err)
 	}
-	for i := range caChain {
-		x := caChain[i]
-		z.Write(pki.PEMEncode(x))
-	}
-
-	x.Ca = z.String()
+	x.Ca = string(pki.PEMEncodeChain(caChain))
 }
 
 func (x *exported) exportUser(c *pki.Cert, srv *pki.Cert, t string, out io.Writer) {

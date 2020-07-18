@@ -14,6 +14,7 @@
 package pki
 
 import (
+	"bytes"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
@@ -29,11 +30,16 @@ import (
 	"time"
 )
 
+// Minimum validity of any signing CA: 1 day
+const _MinValidity time.Duration = 24 * time.Hour
+
 // CA is a special type of Credential that also has a CSR in it.
 type CA struct {
 	Crt     *x509.Certificate
 	privKey *ecdsa.PrivateKey
 	serial  *serialNum
+	rootCA  bool
+	expired bool
 
 	db *database
 }
@@ -51,6 +57,7 @@ type Cert struct {
 
 	IsServer bool
 	IsCA     bool
+	Expired  bool
 
 	// Additional info provided when cert was created
 	Additional []byte
@@ -72,11 +79,91 @@ type CertInfo struct {
 	Additional []byte
 }
 
-// Return the certificate & Key in PEM format.
-// The key may be encrypted (if the cert & key were initially protected
-// by a passphrase).
-func (c *Cert) PEM() (crt []byte, key []byte) {
-	return PEMEncode(c.Crt), c.Rawkey
+// CAparams holds the initial info needed to setup a CA
+type CAparams struct {
+	// Passphrase to encrypt the CA credentials
+	Passwd   string
+	Subject  pkix.Name
+	Validity time.Duration
+
+	// Ask user for a password
+	NoPasswd bool
+
+	// DB file where CA details, CRL, etc are stored
+	// This is a boltDB instance
+	DBfile string
+
+	// If set, create the DB when it is missing
+	CreateIfMissing bool
+}
+
+// Create or Open a CA instance using the parameters in 'p'
+func NewCA(p *CAparams) (*CA, error) {
+
+	d, err := newDB(p.DBfile, p.Passwd, p.CreateIfMissing)
+	if err != nil {
+		return nil, err
+	}
+
+	cd, err := d.getRootCA()
+	if err != nil {
+		return nil, err
+	}
+
+	// If no CA, then we create if needed
+	if cd == nil {
+		if len(p.Subject.CommonName) == 0 {
+			return nil, fmt.Errorf("CA CommonName cannot be empty")
+		}
+
+		if !p.CreateIfMissing {
+			panic("create-if-missing check bad")
+		}
+
+		return createRootCA(p, d)
+	}
+
+	ca := &CA{
+		Crt:     cd.Crt,
+		privKey: cd.Key,
+		db:      d,
+		rootCA:  true,
+		serial: &serialNum{
+			Int: cd.serial,
+		},
+	}
+
+	if err = ca.validate(); err != nil {
+		return nil, err
+	}
+
+	return ca, nil
+}
+
+// Export a PEM encoded CA certificate
+func (ca *CA) PEM() []byte {
+	crt := &pem.Block{
+		Type:  "CERTIFICATE",
+		Bytes: ca.Crt.Raw,
+	}
+
+	return pem.EncodeToMemory(crt)
+}
+
+// Close the CA instance, flush the DB
+func (ca *CA) Close() error {
+	ca.db.close()
+	ca.db = nil
+	ca.Crt = nil
+	ca.privKey = nil
+	ca.serial = nil
+
+	return nil
+}
+
+// Rekey the DB password
+func (ca *CA) RekeyDB(newpw string) error {
+	return ca.db.Rekey(newpw)
 }
 
 // Return the CA chain that is used for signing a given cert
@@ -128,86 +215,15 @@ func PEMEncode(c *x509.Certificate) []byte {
 	return pem.EncodeToMemory(p)
 }
 
-// CAparams holds the initial info needed to setup a CA
-type CAparams struct {
-	// Passphrase to encrypt the CA credentials
-	Passwd   string
-	Subject  pkix.Name
-	Validity time.Duration
+//  PEM Encode a chain of certs
+func PEMEncodeChain(certs []*x509.Certificate) []byte {
+	var b bytes.Buffer
 
-	// Ask user for a password
-	NoPasswd bool
-
-	// DB file where CA details, CRL, etc are stored
-	// This is a boltDB instance
-	DBfile string
-
-	// If set, create the DB when it is missing
-	CreateIfMissing bool
-}
-
-// Create or Open a CA instance using the parameters in 'p'
-func NewCA(p *CAparams) (*CA, error) {
-
-	d, err := newDB(p.DBfile, p.Passwd, p.CreateIfMissing)
-	if err != nil {
-		return nil, err
+	for i := range certs {
+		b.Write(PEMEncode(certs[i]))
 	}
 
-	cd, err := d.getCA()
-	if err != nil {
-		return nil, err
-	}
-
-	// If no CA, then we create if needed
-	if cd == nil {
-		if len(p.Subject.CommonName) == 0 {
-			return nil, fmt.Errorf("CA CommonName cannot be empty")
-		}
-
-		if !p.CreateIfMissing {
-			panic("create-if-missing check bad")
-		}
-
-		return createCA(p, d)
-	}
-
-	ca := &CA{
-		Crt:     cd.Crt,
-		db:      d,
-		privKey: cd.Key,
-		serial: &serialNum{
-			Int: cd.serial,
-		},
-	}
-
-	return ca, nil
-}
-
-// Export a PEM encoded CA certificate
-func (ca *CA) PEM() []byte {
-	crt := &pem.Block{
-		Type:  "CERTIFICATE",
-		Bytes: ca.Crt.Raw,
-	}
-
-	return pem.EncodeToMemory(crt)
-}
-
-// Close the CA instance, flush the DB
-func (ca *CA) Close() error {
-	ca.db.close()
-	ca.db = nil
-	ca.Crt = nil
-	ca.privKey = nil
-	ca.serial = nil
-
-	return nil
-}
-
-// Rekey the DB password
-func (ca *CA) RekeyDB(newpw string) error {
-	return ca.db.Rekey(newpw)
+	return b.Bytes()
 }
 
 // Find a given cn and return the corresponding cert
@@ -217,6 +233,10 @@ func (ca *CA) Find(cn string) (*Cert, error) {
 	}
 
 	if c, err := ca.db.getuser(cn); err == nil {
+		return c, nil
+	}
+
+	if c, err := ca.db.getIntermediateCA(cn); err == nil {
 		return c, nil
 	}
 
@@ -231,6 +251,11 @@ func (ca *CA) FindServer(cn string) (*Cert, error) {
 // Find a user with a given common name
 func (ca *CA) FindUser(cn string) (*Cert, error) {
 	return ca.db.getuser(cn)
+}
+
+// Find an intermediate CA with the given common name
+func (ca *CA) FindCA(cn string) (*Cert, error) {
+	return ca.db.getIntermediateCA(cn)
 }
 
 // delete a user
@@ -261,14 +286,23 @@ func (ca *CA) MapRevoked(fp func(t time.Time, z *x509.Certificate)) error {
 	return ca.db.mapRevoked(fp)
 }
 
+// return list of expired certs
+func (ca *CA) MapExpired(fp func(*Cert) error) error {
+	return ca.db.mapRetired(fp)
+}
+
 // Generate and return a new server certificate
 func (ca *CA) NewServerCert(ci *CertInfo, pw string) (*Cert, error) {
 	if len(ci.IPAddress) == 0 && len(ci.DNSNames) == 0 {
 		return nil, fmt.Errorf("server IP/Hostname can't be empty")
 	}
 
-	if _, err := ca.db.getsrv(ci.Subject.CommonName); err == nil {
-		return nil, ErrExists
+	if err := ca.validate(); err != nil {
+		return nil, err
+	}
+
+	if c, err := ca.db.getsrv(ci.Subject.CommonName); err == nil {
+		return c, ErrExists
 	}
 
 	// We don't encrypt the server key; we need it in plain text
@@ -278,8 +312,12 @@ func (ca *CA) NewServerCert(ci *CertInfo, pw string) (*Cert, error) {
 
 // Generate and return a new client certificate
 func (ca *CA) NewClientCert(ci *CertInfo, pw string) (*Cert, error) {
-	if _, err := ca.db.getuser(ci.Subject.CommonName); err == nil {
-		return nil, ErrExists
+	if err := ca.validate(); err != nil {
+		return nil, err
+	}
+
+	if c, err := ca.db.getuser(ci.Subject.CommonName); err == nil {
+		return c, ErrExists
 	}
 
 	return ca.newCert(ci, false, pw)
@@ -287,15 +325,23 @@ func (ca *CA) NewClientCert(ci *CertInfo, pw string) (*Cert, error) {
 
 // Generate a new intermediate CA
 func (ca *CA) NewIntermediateCA(ci *CertInfo) (*CA, error) {
-	cert, err := ca.db.getIntermediate(ci.Subject.CommonName)
+	if err := ca.validate(); err != nil {
+		return nil, err
+	}
+
+	cert, err := ca.db.getIntermediateCA(ci.Subject.CommonName)
 	if err == nil {
 		ica := &CA{
 			Crt:     cert.Crt,
 			privKey: cert.Key,
-			db:      ca.db,
 			serial:  ca.serial,
+			db:      ca.db,
 		}
-		return ica, nil
+
+		if err = ica.validate(); err != nil {
+			return nil, err
+		}
+		return ica, ErrExists
 	}
 
 	return ca.newIntermediateCA(ci)
@@ -331,6 +377,13 @@ func (ca *CA) CRL(CrlValidDays int) ([]byte, error) {
 	return pem.EncodeToMemory(&p), nil
 }
 
+// Return the certificate & Key in PEM format.
+// The key may be encrypted (if the cert & key were initially protected
+// by a passphrase).
+func (c *Cert) PEM() (crt []byte, key []byte) {
+	return PEMEncode(c.Crt), c.Rawkey
+}
+
 // return DER encoded CRL that's valid for 'validity' days
 func (ca *CA) crl(validity int) ([]byte, error) {
 	var rv []pkix.RevokedCertificate
@@ -350,6 +403,25 @@ func (ca *CA) crl(validity int) ([]byte, error) {
 	exp := now.Add(time.Duration(validity) * 24 * time.Hour)
 	der, err := ca.Crt.CreateCRL(rand.Reader, ca.privKey, rv, now, exp)
 	return der, err
+}
+
+// validate and expire CA cert if needed
+func (ca *CA) validate() error {
+	now := time.Now().UTC()
+	exp := ca.Crt.NotAfter
+	diff := exp.Sub(now)
+	cn := ca.Crt.Subject.CommonName
+	if diff <= _MinValidity {
+		ca.expired = true
+		if ca.rootCA {
+			return fmt.Errorf("root CA has expired")
+		}
+
+		ca.db.retireCA(cn)
+		return fmt.Errorf("CA %s: Expired", cn)
+	}
+
+	return nil
 }
 
 // Generate a new serial# for this CA instance
@@ -384,7 +456,7 @@ func newInitialSerial() (*big.Int, error) {
 }
 
 // NewCA returns a DER encoded self-signed CA cert and CSR.
-func createCA(p *CAparams, db *database) (*CA, error) {
+func createRootCA(p *CAparams, db *database) (*CA, error) {
 	// Serial number
 	serial, err := newInitialSerial()
 	if err != nil {
@@ -441,7 +513,7 @@ func createCA(p *CAparams, db *database) (*CA, error) {
 		serial: sn.Int,
 	}
 
-	err = db.putCA(z)
+	err = db.putRootCA(z)
 	if err != nil {
 		return nil, err
 	}
@@ -451,12 +523,17 @@ func createCA(p *CAparams, db *database) (*CA, error) {
 		db:      db,
 		privKey: eckey,
 		serial:  sn,
+		rootCA:  true,
 	}
 
 	return ca, nil
 }
 
 func (ca *CA) newIntermediateCA(ci *CertInfo) (*CA, error) {
+	if err := ca.validate(); err != nil {
+		return nil, err
+	}
+
 	// Serial number
 	serial := ca.newSerial()
 
@@ -506,15 +583,15 @@ func (ca *CA) newIntermediateCA(ci *CertInfo) (*CA, error) {
 		Key: eckey,
 	}
 
-	err = ca.db.putIntermediate(z)
+	err = ca.db.putIntermediateCA(z)
 	if err != nil {
 		return nil, err
 	}
 
 	ica := &CA{
 		Crt:     cert,
-		db:      ca.db,
 		privKey: eckey,
+		db:      ca.db,
 		serial:  ca.serial,
 	}
 

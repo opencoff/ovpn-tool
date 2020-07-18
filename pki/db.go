@@ -110,6 +110,11 @@ func newDB(fn string, pw string, creat bool) (*database, error) {
 			return fmt.Errorf("%s: can't create revoked bucket: %s", fn, err)
 		}
 
+		_, err = tx.CreateBucketIfNotExists([]byte("expired"))
+		if err != nil {
+			return fmt.Errorf("%s: can't create expired bucket: %s", fn, err)
+		}
+
 		_, err = tx.CreateBucketIfNotExists([]byte("ica"))
 		if err != nil {
 			return fmt.Errorf("%s: can't create intermediate ca bucket: %s", fn, err)
@@ -234,7 +239,7 @@ func (d *database) Rekey(newpw string) error {
 }
 
 // Return an initialized ca info
-func (d *database) getCA() (*cadata, error) {
+func (d *database) getRootCA() (*cadata, error) {
 	var c *cadata
 
 	err := d.db.View(func(tx *bolt.Tx) error {
@@ -283,7 +288,7 @@ func (d *database) getCA() (*cadata, error) {
 }
 
 // find and get the intermediate ca
-func (d *database) getIntermediate(cn string) (*Cert, error) {
+func (d *database) getIntermediateCA(cn string) (*Cert, error) {
 	var ck *Cert
 
 	err := d.db.View(func(tx *bolt.Tx) error {
@@ -316,7 +321,7 @@ func (d *database) getIntermediate(cn string) (*Cert, error) {
 }
 
 // find and get the intermediate ca
-func (d *database) putIntermediate(c *Cert) error {
+func (d *database) putIntermediateCA(c *Cert) error {
 	pw := fmt.Sprintf("%x", d.pwd)
 	b, err := c.marshal(pw)
 	if err != nil {
@@ -346,6 +351,35 @@ func (d *database) putIntermediate(c *Cert) error {
 	return err
 }
 
+// retire/expire a CA
+func (d *database) retireCA(cn string) error {
+	err := d.db.Update(func(tx *bolt.Tx) error {
+		bu := tx.Bucket([]byte("ica"))
+		if bu == nil {
+			return fmt.Errorf("%s: can't find ica bucket", cn)
+		}
+
+		rv := tx.Bucket([]byte("expired"))
+		if bu == nil {
+			return fmt.Errorf("%s: can't find expired bucket", cn)
+		}
+
+		k := d.key(cn)
+		eb := bu.Get(k)
+		if eb == nil {
+			return fmt.Errorf("%s: can't find %s", cn)
+		}
+
+		if err := bu.Delete(k); err != nil {
+			return fmt.Errorf("%s: can't delete: %s", cn, err)
+		}
+
+		// Now move this to the expired bucket
+		return rv.Put(k, eb)
+	})
+	return err
+}
+
 // Decode a serialized cert/key pair
 func decodeCert(cn string, ub []byte) (*Cert, error) {
 	var cg certgob
@@ -361,9 +395,16 @@ func decodeCert(cn string, ub []byte) (*Cert, error) {
 		return nil, fmt.Errorf("%s: can't parse cert: %s", cn, err)
 	}
 
+	now := time.Now().UTC()
+	exp := cert.NotAfter
+	diff := exp.Sub(now)
+
+	var expired bool = diff <= _MinValidity
+
 	ck := &Cert{
 		Crt:        cert,
 		Rawkey:     cg.Key,
+		Expired:    expired,
 		Additional: cg.Additional,
 	}
 	return ck, nil
@@ -451,7 +492,7 @@ func (c *Cert) marshal(pw string) ([]byte, error) {
 
 // marshal and write the CA to disk
 // Also update the serial#
-func (d *database) putCA(ca *cadata) error {
+func (d *database) putRootCA(ca *cadata) error {
 	if d.initialized {
 		return fmt.Errorf("CA already initialized")
 	}
@@ -593,7 +634,7 @@ func (d *database) delcert(cn string, table string) error {
 		}
 
 		k := d.key(cn)
-		rub := bu.Get(d.key(cn))
+		rub := bu.Get(k)
 		if rub == nil {
 			return fmt.Errorf("%s: can't find %s", cn, table)
 		}
@@ -680,6 +721,34 @@ func (d *database) mapCA(fp func(s *Cert) error) error {
 			}
 
 			c.IsCA = true
+			fp(c)
+			return nil
+		})
+
+		return err
+	})
+	return err
+}
+
+// iterate over all expired/retired entries
+func (d *database) mapRetired(fp func(*Cert) error) error {
+	err := d.db.View(func(tx *bolt.Tx) error {
+		bu := tx.Bucket([]byte("expired"))
+		if bu == nil {
+			return fmt.Errorf("can't find expired bucket")
+		}
+
+		err := bu.ForEach(func(k, ev []byte) error {
+			v, err := d.decrypt(ev)
+			if err != nil {
+				return fmt.Errorf("can't decrypt ica cert info: %s", err)
+			}
+
+			c, err := decodeCert("expired-cert", v)
+			if err != nil {
+				return err
+			}
+
 			fp(c)
 			return nil
 		})

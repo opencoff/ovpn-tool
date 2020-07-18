@@ -42,19 +42,24 @@ func ListCert(db string, args []string) {
 	args = fs.Args()
 
 	if len(args) == 0 {
+		// always print the abbreviated root-CA
+		c := &pki.Cert{
+			Crt: ca.Crt,
+		}
+		printcert(c, true)
 
 		ca.MapCA(func(c *pki.Cert) error {
-			printcert(c)
+			printcert(c, false)
 			return nil
 		})
 
 		ca.MapServers(func(c *pki.Cert) error {
-			printcert(c)
+			printcert(c, false)
 			return nil
 		})
 
 		ca.MapUsers(func(c *pki.Cert) error {
-			printcert(c)
+			printcert(c, false)
 			return nil
 		})
 
@@ -67,11 +72,11 @@ func ListCert(db string, args []string) {
 			warn("Can't find Common Name %s", cn)
 			continue
 		}
-		printcert(c)
+		printcert(c, false)
 	}
 }
 
-func printcert(c *pki.Cert) {
+func printcert(c *pki.Cert, rootCA bool) {
 	var pref, server string
 	z := c.Crt
 
@@ -86,6 +91,8 @@ func printcert(c *pki.Cert) {
 		server = "server"
 	} else if c.IsCA {
 		server = "CA (I)"
+	} else if rootCA {
+		server = "Root-CA"
 	}
 
 	fmt.Printf("%-16s  %7.7s %#x (%s)\n", z.Subject.CommonName, server, z.SerialNumber, pref)
