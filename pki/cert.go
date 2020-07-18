@@ -254,8 +254,22 @@ func (ca *CA) FindUser(cn string) (*Cert, error) {
 }
 
 // Find an intermediate CA with the given common name
-func (ca *CA) FindCA(cn string) (*Cert, error) {
-	return ca.db.getIntermediateCA(cn)
+func (ca *CA) FindCA(cn string) (*CA, error) {
+	cert, err := ca.db.getIntermediateCA(cn)
+	if err == nil {
+		ica := &CA{
+			Crt:     cert.Crt,
+			privKey: cert.Key,
+			serial:  ca.serial,
+			db:      ca.db,
+		}
+
+		if err = ica.validate(); err != nil {
+			return nil, err
+		}
+		return ica, nil
+	}
+	return nil, ErrNotFound
 }
 
 // delete a user
