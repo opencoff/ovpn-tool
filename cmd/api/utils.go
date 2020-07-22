@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"io/ioutil"
 	"net"
@@ -96,7 +97,17 @@ func (ccd CCD) writeNextStaticIP(cn string) error {
 }
 
 func (ccd CCD) writeStaticIP(cn, ip string) error {
-	data := fmt.Sprintf("ifconfig-push %s %s", ip, ccd.gatewayIP)
+	_, ipv4Net, err := net.ParseCIDR(ccd.vpnSubnet)
+	if err != nil {
+		return err
+	}
+
+	subnet, err := ipv4MaskString(ipv4Net.Mask)
+	if err != nil {
+		return err
+	}
+
+	data := fmt.Sprintf("ifconfig-push %s %s", ip, subnet)
 	return ioutil.WriteFile(filepath.Join(ccd.path, cn), []byte(data), 0600)
 }
 
@@ -132,4 +143,12 @@ func (ccd CCD) nextAvailableIP() string {
 	hosts, _ := cidrHosts(ccd.vpnSubnet)
 	ip := nextAvailableIP(hosts, ccd.currentIPs())
 	return ip
+}
+
+func ipv4MaskString(m []byte) (string, error) {
+	if len(m) != 4 {
+		return "", errors.New("ipv4Mask: len must be 4 bytes")
+	}
+
+	return fmt.Sprintf("%d.%d.%d.%d", m[0], m[1], m[2], m[3]), nil
 }
