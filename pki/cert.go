@@ -140,6 +140,11 @@ func NewCA(p *CAparams) (*CA, error) {
 	return ca, nil
 }
 
+// export in JSON format
+func (ca *CA) DbDump() (string, error) {
+	return ca.db.dumpJSON(ca, ca.serial.Int)
+}
+
 // Export a PEM encoded CA certificate
 func (ca *CA) PEM() []byte {
 	crt := &pem.Block{

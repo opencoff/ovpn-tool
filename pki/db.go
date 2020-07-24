@@ -40,6 +40,7 @@ import (
 	"os"
 	"path"
 	"time"
+	"strings"
 )
 
 type database struct {
@@ -349,6 +350,199 @@ func (d *database) putIntermediateCA(c *Cert) error {
 	})
 
 	return err
+}
+
+func keyPEM(key *ecdsa.PrivateKey, pw []byte) ([]byte, error) {
+	derkey, err := x509.MarshalECPrivateKey(key)
+	if err != nil {
+		return nil, fmt.Errorf("can't marshal private key: %s", err)
+	}
+
+	var blk *pem.Block
+	if len(pw) > 0 {
+		blk, err = x509.EncryptPEMBlock(rand.Reader, "EC PRIVATE KEY", derkey, pw, x509.PEMCipherAES256)
+		if err != nil {
+			return nil, err
+		}
+	} else {
+		blk = &pem.Block{
+			Type:  "EC PRIVATE KEY",
+			Bytes: derkey,
+		}
+	}
+
+	return pem.EncodeToMemory(blk), nil
+}
+
+type jsonState struct {
+	Salt	[]byte
+	Rawkey  []byte
+	Serial  []byte
+	Cacert  string
+	Cakey   string
+	Servers []*certKey
+	Clients []*certKey
+	Icas    []*certKey
+	Revoked []*revoked
+}
+
+type certKey struct {
+	Cert string
+	Key  string
+}
+
+type revoked struct {
+	Cert string
+	When time.Time
+}
+
+// dump the DB in JSON format
+func (d *database) dumpJSON(root *CA, serial *big.Int) (string, error) {
+	var w strings.Builder
+
+	salt   := d.salt
+	rawkey := d.pwd
+	sbytes := serial.Bytes()
+	cacrt  := strings.ReplaceAll(string(root.PEM()), "\n", `\n`)
+	ck0, err  := keyPEM(root.privKey, d.pwd)
+	if err != nil {
+		return "", err
+	}
+
+	cakey := strings.ReplaceAll(string(ck0), "\n", `\n`)
+
+	servers, err := d.getCerts("server")
+	if err != nil {
+		return "", fmt.Errorf("can't get servers: %w", err)
+	}
+
+	clients, err := d.getCerts("user")
+	if err != nil {
+		return "", fmt.Errorf("can't get users: %w", err)
+	}
+
+	ica, err := d.getCerts("ica")
+	if err != nil {
+		return "", fmt.Errorf("can't get ica: %w", err)
+	}
+
+
+	var revoked strings.Builder
+	err = d.db.View(func(tx *bolt.Tx) error {
+		w := &revoked
+		bu := tx.Bucket([]byte("revoked"))
+		if bu == nil {
+			w.WriteString("[],\n")
+			return nil
+		}
+
+		w.WriteString("[\n")
+		err := bu.ForEach(func(k, ev []byte) error {
+			tb, err := d.decrypt(k)
+			if err != nil {
+				return fmt.Errorf("can't decrypt time: %w", err)
+			}
+
+			var t time.Time
+			err = t.UnmarshalBinary(tb)
+			if err != nil {
+				return fmt.Errorf("can't decode time: %w", err)
+			}
+
+			v, err := d.decrypt(ev)
+			if err != nil {
+				return fmt.Errorf("can't decrypt cert: %w", err)
+			}
+			ck, err := decodeCert("$revoked", v)
+			if err != nil {
+				return fmt.Errorf("can't decode cert: %w", err)
+			}
+			p0, k0 := ck.PEM()
+			pem := strings.ReplaceAll(string(p0), "\n", `\n`)
+			key := strings.ReplaceAll(string(k0), "\n", `\n`)
+			s := fmt.Sprintf(`
+	{
+		"cert": "%s",
+		"key": "%s",
+		"when": "%s",
+	},
+`, pem, key, t.Format(time.RFC822Z))
+			w.WriteString(s)
+
+			return nil
+		})
+		w.WriteString("]\n")
+		return err
+	})
+
+	cjson := func(v []*Cert) string {
+		var w strings.Builder
+
+		w.WriteString("[\n")
+		for i := range v {
+			ck := v[i]
+			p0, k0 := ck.PEM()
+			pem := strings.ReplaceAll(string(p0), "\n", `\n`)
+			key := strings.ReplaceAll(string(k0), "\n", `\n`)
+			s := fmt.Sprintf(`
+	{
+		"cert": "%s",
+		"key": "%s",
+	},
+`, pem, key)
+			w.WriteString(s)
+		}
+		w.WriteString("]\n")
+		return w.String()
+	}
+
+	w.WriteString("{\n")
+	s := fmt.Sprintf(`"config": {
+		"salt": "%x",
+		"rawkey": "%x",
+		"serial": "%x",
+		"cacrt": "%s",
+		"cakey": "%s",
+	},
+	"servers": %s,
+	"clients": %s,
+	"ica":     %s,
+	"revoked": %s,
+}`,  salt, rawkey, sbytes, cacrt, cakey, cjson(servers), cjson(clients), cjson(ica),
+revoked.String())
+	w.WriteString(s)
+
+	return w.String(), nil
+}
+
+func (d *database) getCerts(nm string) ([]*Cert, error) {
+	certs := make([]*Cert, 0, 4)
+	err := d.db.View(func(tx *bolt.Tx) error {
+		bu := tx.Bucket([]byte(nm))
+		if bu == nil {
+			return nil
+		}
+
+		err := bu.ForEach(func(k, ev []byte) error {
+			v, err := d.decrypt(ev)
+			if err != nil {
+				return fmt.Errorf("can't decrypt %s cert info: %w", nm, err)
+			}
+
+			c, err := decodeCert("ica-cert", v)
+			if err != nil {
+				return fmt.Errorf("can't decode %s cert: %w", nm, err)
+			}
+			if nm == "ica" {
+				c.IsCA = true
+			}
+			certs = append(certs, c)
+			return nil
+		})
+		return err
+	})
+
+	return certs, err
 }
 
 // retire/expire a CA

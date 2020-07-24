@@ -32,13 +32,14 @@ func ExportCert(db string, args []string) {
 	var outfile string
 	var server string
 	var templ string
-	var prUser, prSrv bool
+	var prUser, prSrv, json bool
 
 	fs.StringVarP(&outfile, "outfile", "o", "", "Write the output to file `F`")
 	fs.StringVarP(&server, "server", "s", "", "Export configuration for use with server `S`")
 	fs.StringVarP(&templ, "template", "t", "", "Use openvpn config template from file `T`")
 	fs.BoolVarP(&prUser, "print-client-template", "", false, "Dump the OpenVPN client template")
 	fs.BoolVarP(&prSrv, "print-server-template", "", false, "Dump the OpenVPN server template")
+	fs.BoolVarP(&json, "json", "j", false, "Dump DB in JSON format")
 
 	err := fs.Parse(args)
 	if err != nil {
@@ -79,17 +80,6 @@ func ExportCert(db string, args []string) {
 	ca := OpenCA(db)
 	defer ca.Close()
 
-	var srv *pki.Cert
-
-	if len(server) > 0 {
-		// we ignore the unusual case exporting server config for use itself
-		if server != cn {
-			srv, err = ca.FindServer(server)
-			if err != nil {
-				die("Can't find server with name '%s': %s", server, err)
-			}
-		}
-	}
 
 	var out io.Writer = os.Stdout
 	if len(outfile) > 0 && outfile != "-" {
@@ -99,6 +89,25 @@ func ExportCert(db string, args []string) {
 		out = fd
 	}
 
+	if json {
+		j, err := ca.DbDump()
+		if err != nil {
+			die("can't dump db: %s", err)
+		}
+		fmt.Fprintf(out, j)
+		os.Exit(0)
+	}
+
+	var srv *pki.Cert
+	if len(server) > 0 {
+		// we ignore the unusual case exporting server config for use itself
+		if server != cn {
+			srv, err = ca.FindServer(server)
+			if err != nil {
+				die("Can't find server with name '%s': %s", server, err)
+			}
+		}
+	}
 	x := &exported{
 		Date: time.Now().UTC().Format(time.RFC1123Z),
 		Tool: toolInfo(),
