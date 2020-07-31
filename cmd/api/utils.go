@@ -108,7 +108,7 @@ func (ccd CCD) writeStaticIP(cn, ip string) error {
 	}
 
 	data := fmt.Sprintf("ifconfig-push %s %s", ip, subnet)
-	return ioutil.WriteFile(filepath.Join(ccd.path, cn), []byte(data), 0600)
+	return ioutil.WriteFile(filepath.Join(ccd.path, cn), []byte(data), 0644)
 }
 
 func (ccd CCD) currentIPMap() map[string]string {
