@@ -33,6 +33,7 @@ import (
 	"crypto/subtle"
 	"crypto/x509"
 	"encoding/gob"
+	"encoding/json"
 	"encoding/pem"
 	"fmt"
 	bolt "github.com/etcd-io/bbolt"
@@ -40,7 +41,6 @@ import (
 	"os"
 	"path"
 	"time"
-	"strings"
 )
 
 type database struct {
@@ -375,41 +375,39 @@ func keyPEM(key *ecdsa.PrivateKey, pw []byte) ([]byte, error) {
 }
 
 type jsonState struct {
-	Salt	[]byte
-	Rawkey  []byte
-	Serial  []byte
-	Cacert  string
-	Cakey   string
+	Config  jsonConfig
 	Servers []*certKey
 	Clients []*certKey
 	Icas    []*certKey
 	Revoked []*revoked
 }
+type jsonConfig struct {
+	Salt   []byte
+	Rawkey []byte
+	Serial []byte
+	Cert   string
+	Key    string
+}
 
 type certKey struct {
-	Cert string
-	Key  string
+	Cert       string
+	Key        string
+	Additional []byte `json:",omitempty"`
 }
 
 type revoked struct {
 	Cert string
+	Key  string
 	When time.Time
 }
 
 // dump the DB in JSON format
 func (d *database) dumpJSON(root *CA, serial *big.Int) (string, error) {
-	var w strings.Builder
-
-	salt   := d.salt
-	rawkey := d.pwd
-	sbytes := serial.Bytes()
-	cacrt  := strings.ReplaceAll(string(root.PEM()), "\n", `\n`)
-	ck0, err  := keyPEM(root.privKey, d.pwd)
+	cacrt := root.PEM()
+	cakey, err := keyPEM(root.privKey, d.pwd)
 	if err != nil {
 		return "", err
 	}
-
-	cakey := strings.ReplaceAll(string(ck0), "\n", `\n`)
 
 	servers, err := d.getCerts("server")
 	if err != nil {
@@ -426,17 +424,13 @@ func (d *database) dumpJSON(root *CA, serial *big.Int) (string, error) {
 		return "", fmt.Errorf("can't get ica: %w", err)
 	}
 
-
-	var revoked strings.Builder
+	rev := make([]*revoked, 0, 4)
 	err = d.db.View(func(tx *bolt.Tx) error {
-		w := &revoked
 		bu := tx.Bucket([]byte("revoked"))
 		if bu == nil {
-			w.WriteString("[],\n")
 			return nil
 		}
 
-		w.WriteString("[\n")
 		err := bu.ForEach(func(k, ev []byte) error {
 			tb, err := d.decrypt(k)
 			if err != nil {
@@ -458,61 +452,51 @@ func (d *database) dumpJSON(root *CA, serial *big.Int) (string, error) {
 				return fmt.Errorf("can't decode cert: %w", err)
 			}
 			p0, k0 := ck.PEM()
-			pem := strings.ReplaceAll(string(p0), "\n", `\n`)
-			key := strings.ReplaceAll(string(k0), "\n", `\n`)
-			s := fmt.Sprintf(`
-	{
-		"cert": "%s",
-		"key": "%s",
-		"when": "%s",
-	},
-`, pem, key, t.Format(time.RFC822Z))
-			w.WriteString(s)
-
+			r := &revoked{
+				Cert: string(p0),
+				Key:  string(k0),
+				When: t,
+			}
+			rev = append(rev, r)
 			return nil
 		})
-		w.WriteString("]\n")
 		return err
 	})
 
-	cjson := func(v []*Cert) string {
-		var w strings.Builder
-
-		w.WriteString("[\n")
+	gather := func(v []*Cert) []*certKey {
+		w := make([]*certKey, 0, len(v))
 		for i := range v {
 			ck := v[i]
 			p0, k0 := ck.PEM()
-			pem := strings.ReplaceAll(string(p0), "\n", `\n`)
-			key := strings.ReplaceAll(string(k0), "\n", `\n`)
-			s := fmt.Sprintf(`
-	{
-		"cert": "%s",
-		"key": "%s",
-	},
-`, pem, key)
-			w.WriteString(s)
+			r := &certKey{
+				Cert:       string(p0),
+				Key:        string(k0),
+				Additional: ck.Additional,
+			}
+			w = append(w, r)
 		}
-		w.WriteString("]\n")
-		return w.String()
+		return w
 	}
 
-	w.WriteString("{\n")
-	s := fmt.Sprintf(`"config": {
-		"salt": "%x",
-		"rawkey": "%x",
-		"serial": "%x",
-		"cacrt": "%s",
-		"cakey": "%s",
-	},
-	"servers": %s,
-	"clients": %s,
-	"ica":     %s,
-	"revoked": %s,
-}`,  salt, rawkey, sbytes, cacrt, cakey, cjson(servers), cjson(clients), cjson(ica),
-revoked.String())
-	w.WriteString(s)
+	jj := &jsonState{
+		Config: jsonConfig{
+			Salt:   d.salt,
+			Rawkey: d.pwd,
+			Serial: serial.Bytes(),
+			Cert:   string(cacrt),
+			Key:    string(cakey),
+		},
+		Servers: gather(servers),
+		Clients: gather(clients),
+		Icas:    gather(ica),
+		Revoked: rev,
+	}
 
-	return w.String(), nil
+	jb, err := json.MarshalIndent(jj, "", "    ")
+	if err != nil {
+		return "", fmt.Errorf("json encode: %w", err)
+	}
+	return string(jb), nil
 }
 
 func (d *database) getCerts(nm string) ([]*Cert, error) {

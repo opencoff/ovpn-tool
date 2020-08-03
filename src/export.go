@@ -59,9 +59,31 @@ func ExportCert(db string, args []string) {
 		os.Exit(0)
 	}
 
+	ca := OpenCA(db)
+	defer ca.Close()
+
+	var out io.Writer = os.Stdout
+	if len(outfile) > 0 && outfile != "-" {
+		fd := mustOpen(outfile, os.O_WRONLY|os.O_CREATE|os.O_TRUNC)
+		defer fd.Close()
+
+		out = fd
+	}
+
+	// Handle Json export first
+	if json {
+		j, err := ca.DbDump()
+		if err != nil {
+			die("can't dump db: %s", err)
+		}
+		fmt.Fprintf(out, j)
+		os.Exit(0)
+	}
+
 	if len(args) == 0 {
 		fs.Usage()
 	}
+	cn := args[0]
 
 	// 1. We prefer to use a user supplied template if provided
 	// 2. Else, we use an internal/hardcoded template
@@ -74,28 +96,6 @@ func ExportCert(db string, args []string) {
 		}
 
 		template = string(buf)
-	}
-
-	cn := args[0]
-	ca := OpenCA(db)
-	defer ca.Close()
-
-
-	var out io.Writer = os.Stdout
-	if len(outfile) > 0 && outfile != "-" {
-		fd := mustOpen(outfile, os.O_WRONLY|os.O_CREATE|os.O_TRUNC)
-		defer fd.Close()
-
-		out = fd
-	}
-
-	if json {
-		j, err := ca.DbDump()
-		if err != nil {
-			die("can't dump db: %s", err)
-		}
-		fmt.Fprintf(out, j)
-		os.Exit(0)
 	}
 
 	var srv *pki.Cert
