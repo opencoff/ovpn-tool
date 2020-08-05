@@ -15,8 +15,8 @@ import (
 	"path"
 	"strings"
 
+	"github.com/opencoff/go-pki"
 	"github.com/opencoff/go-utils"
-	"github.com/opencoff/ovpn-tool/pki"
 	flag "github.com/opencoff/pflag"
 )
 
@@ -84,7 +84,7 @@ Options:
 		"init":            InitCmd,
 		"server":          ServerCert,
 		"user":            UserCert,
-		"delete":          DelUser,
+		"delete":          Delete,
 		"client":          UserCert,
 		"export":          ExportCert,
 		"show":            ListCert,

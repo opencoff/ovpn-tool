@@ -13,7 +13,7 @@ import (
 	"os"
 	"time"
 
-	"github.com/opencoff/ovpn-tool/pki"
+	"github.com/opencoff/go-pki"
 	flag "github.com/opencoff/pflag"
 )
 
@@ -36,7 +36,7 @@ func ListCert(db string, args []string) {
 	defer ca.Close()
 
 	if showCA {
-		fmt.Printf("CA Certificate:\n%s\n", Cert(*ca.Crt))
+		fmt.Printf("CA Certificate:\n%s\n", Cert(*ca.Certificate))
 	}
 
 	args = fs.Args()
@@ -44,24 +44,42 @@ func ListCert(db string, args []string) {
 	if len(args) == 0 {
 		// always print the abbreviated root-CA
 		c := &pki.Cert{
-			Crt: ca.Crt,
+			Certificate: ca.Certificate,
 		}
 		printcert(c, true)
 
-		ca.MapCA(func(c *pki.Cert) error {
-			printcert(c, false)
-			return nil
-		})
+		var certs []*pki.Cert
 
-		ca.MapServers(func(c *pki.Cert) error {
-			printcert(c, false)
-			return nil
-		})
+		certs, err := ca.GetServers()
+		if err != nil {
+			die("can't fetch servers: %s", err)
+		}
 
-		ca.MapUsers(func(c *pki.Cert) error {
-			printcert(c, false)
-			return nil
-		})
+		users, err := ca.GetClients()
+		if err != nil {
+			die("can't fetch users: %s", err)
+		}
+		certs = append(certs, users...)
+
+		cas, err := ca.GetCAs()
+		if err != nil {
+			die("can't fetch CAs: %s", err)
+		}
+		for i := range certs {
+			printcert(certs[i], false)
+		}
+
+		for i := range cas {
+			c := cas[i]
+			if c.SerialNumber.Cmp(ca.SerialNumber) == 0 {
+				continue
+			}
+			z := &pki.Cert{
+				Certificate: c.Certificate,
+				IsCA:        true,
+			}
+			printcert(z, false)
+		}
 
 		return
 	}
@@ -76,9 +94,8 @@ func ListCert(db string, args []string) {
 	}
 }
 
-func printcert(c *pki.Cert, rootCA bool) {
+func printcert(z *pki.Cert, rootCA bool) {
 	var pref, server string
-	z := c.Crt
 
 	now := time.Now().UTC()
 	if now.After(z.NotAfter) {
@@ -87,16 +104,16 @@ func printcert(c *pki.Cert, rootCA bool) {
 		pref = fmt.Sprintf("valid until %s", z.NotAfter)
 	}
 
-	if c.IsServer {
+	if z.IsServer {
 		server = "server"
-	} else if c.IsCA {
+	} else if z.IsCA {
 		server = "CA (I)"
 	} else if rootCA {
 		server = "Root-CA"
 	}
 
 	fmt.Printf("%-16s  %7.7s %#x (%s)\n", z.Subject.CommonName, server, z.SerialNumber, pref)
-	Print("%s\n", Cert(*z))
+	Print("%s\n", Cert(*z.Certificate))
 }
 
 func listUsage(fs *flag.FlagSet) {

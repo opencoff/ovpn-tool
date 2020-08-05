@@ -18,13 +18,112 @@ import (
 	"os"
 	"strings"
 
-	"github.com/opencoff/ovpn-tool/pki"
+	"github.com/opencoff/go-pki"
 	flag "github.com/opencoff/pflag"
 )
 
 type srvdata struct {
 	Port uint16
 	TLS  []byte
+}
+
+// Implement the 'server' command
+func ServerCert(db string, args []string) {
+	fs := flag.NewFlagSet("server", flag.ExitOnError)
+	fs.Usage = func() {
+		serverUsage(fs)
+	}
+
+	var yrs uint = 2
+	var dns StringList
+	var ip IPList
+	var port uint16 = 1194
+	var signer string
+
+	fs.UintVarP(&yrs, "validity", "V", yrs, "Issue server certificate with `N` years validity")
+	fs.VarP(&dns, "dnsname", "d", "Add `M` to list of DNS names for this server")
+	fs.VarP(&ip, "ip-address", "i", "Add `IP` to list of IP addresses for this server")
+	fs.Uint16VarP(&port, "port", "p", port, "Use `P` as the server listening port number")
+	fs.StringVarP(&signer, "sign-with", "s", "", "Use `S` as the signing CA [root-CA]")
+
+	err := fs.Parse(args)
+	if err != nil {
+		die("%s", err)
+	}
+
+	args = fs.Args()
+	if len(args) < 1 {
+		warn("Insufficient arguments to 'server'\n")
+		fs.Usage()
+	}
+
+	cn := args[0]
+	if strings.Index(cn, ".") > 0 {
+		dns = append(dns, cn)
+	}
+
+	if len(ip) == 0 && len(dns) == 0 {
+		warn("No server IP or hostnames specified; generated configs may be incomplete..")
+	}
+
+	tlscrypt := make([]byte, 256)
+	_, err = io.ReadFull(rand.Reader, tlscrypt)
+	if err != nil {
+		panic("can't read tlscrypt random bytes")
+	}
+
+	sd := &srvdata{
+		Port: port,
+		TLS:  tlscrypt,
+	}
+
+	encA, err := encodeAdditional(sd)
+	if err != nil {
+		die("%s", err)
+	}
+
+	ca := OpenCA(db)
+	if len(signer) > 0 {
+		ica, err := ca.FindCA(signer)
+		if err != nil {
+			die("can't find signer %s: %s", signer, err)
+		}
+		ca = ica
+	}
+	defer ca.Close()
+
+	ci := &pki.CertInfo{
+		Subject:    ca.Subject,
+		Validity:   years(yrs),
+		DNSNames:   []string(dns),
+		Additional: encA,
+	}
+	ci.Subject.CommonName = cn
+	if len(ip) > 0 {
+		ci.IPAddresses = []net.IP(ip)
+	}
+
+	// We don't encrypt server certs
+	srv, err := ca.NewServerCert(ci, "")
+	if err != nil {
+		die("can't create server cert: %s", err)
+	}
+
+	Print("New server cert:\n%s\n", Cert(*srv.Certificate))
+}
+
+func serverUsage(fs *flag.FlagSet) {
+	fmt.Printf(`%s server: Issue a new OpenVPN server certificate
+
+Usage: %s DB server [options] CN
+
+Where 'DB' is the CA Database file name and 'CN' is the CommonName for the server.
+
+Options:
+`, os.Args[0], os.Args[0])
+
+	fs.PrintDefaults()
+	os.Exit(0)
 }
 
 // Encode additional info for a server
@@ -52,106 +151,4 @@ func decodeAdditional(eb []byte) (*srvdata, error) {
 		return nil, fmt.Errorf("can't decode additional data: %s", err)
 	}
 	return &s, nil
-}
-
-// Implement the 'server' command
-func ServerCert(db string, args []string) {
-	fs := flag.NewFlagSet("server", flag.ExitOnError)
-	fs.Usage = func() {
-		serverUsage(fs)
-	}
-
-	var yrs uint = 2
-	var dns StringList
-	var ip net.IP
-	var port uint16 = 1194
-	var signer string
-
-	fs.UintVarP(&yrs, "validity", "V", yrs, "Issue server certificate with `N` years validity")
-	fs.VarP(&dns, "dnsname", "d", "Add `M` to list of DNS names for this server")
-	fs.IPVarP(&ip, "ip-address", "i", ip, "Use `S` as the server listening IP address")
-	fs.Uint16VarP(&port, "port", "p", port, "Use `P` as the server listening port number")
-	fs.StringVarP(&signer, "sign-with", "s", "", "Use `S` as the signing CA [root-CA]")
-
-	err := fs.Parse(args)
-	if err != nil {
-		die("%s", err)
-	}
-
-	args = fs.Args()
-	if len(args) < 1 {
-		warn("Insufficient arguments to 'server'\n")
-		fs.Usage()
-	}
-
-	cn := args[0]
-	if strings.Index(cn, ".") > 0 {
-		dns.V = append(dns.V, cn)
-	}
-
-	if len(ip) == 0 && len(dns.V) == 0 {
-		warn("No server IP or hostnames specified; generated configs may be incomplete..")
-	}
-
-	tlscrypt := make([]byte, 256)
-	_, err = io.ReadFull(rand.Reader, tlscrypt)
-	if err != nil {
-		panic("can't read tlscrypt random bytes")
-	}
-
-	sd := &srvdata{
-		Port: port,
-		TLS:  tlscrypt,
-	}
-
-	encA, err := encodeAdditional(sd)
-	if err != nil {
-		die("%s", err)
-	}
-
-	ca := OpenCA(db)
-	if len(signer) > 0 {
-		ici := &pki.CertInfo{
-			Subject: ca.Crt.Subject,
-		}
-
-		ici.Subject.CommonName = signer
-		ica, err := ca.NewIntermediateCA(ici)
-		if err != nil {
-			die("can't find signer %s: %s", signer, err)
-		}
-		ca = ica
-	}
-	defer ca.Close()
-
-	ci := &pki.CertInfo{
-		Subject:    ca.Crt.Subject,
-		Validity:   years(yrs),
-		DNSNames:   dns.V,
-		IPAddress:  ip,
-		Additional: encA,
-	}
-	ci.Subject.CommonName = cn
-
-	// We don't encrypt server certs
-	srv, err := ca.NewServerCert(ci, "")
-	if err != nil {
-		die("can't create server cert: %s", err)
-	}
-
-	Print("New server cert:\n%s\n", Cert(*srv.Crt))
-}
-
-func serverUsage(fs *flag.FlagSet) {
-	fmt.Printf(`%s server: Issue a new OpenVPN server certificate
-
-Usage: %s DB server [options] CN
-
-Where 'DB' is the CA Database file name and 'CN' is the CommonName for the server.
-
-Options:
-`, os.Args[0], os.Args[0])
-
-	fs.PrintDefaults()
-	os.Exit(0)
 }

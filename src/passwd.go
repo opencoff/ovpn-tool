@@ -12,8 +12,8 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/opencoff/go-pki"
 	"github.com/opencoff/ovpn-tool/internal/utils"
-	"github.com/opencoff/ovpn-tool/pki"
 	flag "github.com/opencoff/pflag"
 )
 
@@ -37,14 +37,13 @@ func ChangePasswd(dbfile string, args []string) {
 		die("%s", err)
 	}
 
-	p := pki.CAparams{
+	p := pki.Config{
 		Passwd: oldpw,
-		DBfile: dbfile,
 	}
 
-	ca, err := pki.NewCA(&p)
+	ca, err := pki.New(&p, oldpw, false)
 	if err != nil {
-		die("%s", err)
+		die("can't open CA: %s", err)
 	}
 
 	defer ca.Close()
@@ -54,7 +53,7 @@ func ChangePasswd(dbfile string, args []string) {
 		die("%s", err)
 	}
 
-	err = ca.RekeyDB(newpw)
+	err = ca.Rekey(newpw)
 	if err != nil {
 		die("%s", err)
 	}

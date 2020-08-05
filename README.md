@@ -4,12 +4,21 @@ configuration generator. It has _no_ dependencies on any other external tool
 such as openssl. It is a replacement for and an enhancement to easy-rsa
 (typically bundled with OpenVPN).
 
+## IMPORTANT
+* v0.9.x is a breaking change from the previous version:
+   - `pki/` code is moved to its own repository
+   - boltdb code refactored (e.g., use AEAD for storing DB key)
+* If you are using v0.8.x, please export the database and import it.
+  See the section on importing below.
+
 ## Features
 * Uses a single [boltdb](https://github.com/etcd/bbolt) instance to store the
   certificates and keys.
 * All data strored in the database is encrypted with keys derived from a user
   supplied CA passphrase.
+* Support for arbitrary chain of intermediate CAs
 * The certificates and keys are opinionated:
+   * Secp521r1 used for CA certificates
    * Secp256k1 EC certificate private keys
    * "SSL-Server" attribute set on server certificates (nsCertType)
    * "SSL-Client" attribute set on client certificates (nsCertType)
@@ -31,7 +40,8 @@ such as openssl. It is a replacement for and an enhancement to easy-rsa
    * The Client and Server configurations uses the `tls-crypt` option
      to ensure that the server is protected with an additional layer
      of encryption to thwart DoS attacks.
-
+* Ability to export DB contents as a JSON file; ability to import
+  JSON from a previous export.
 
 ## Building ovpn-tool
 You will need a fairly recent golang toolchain (>1.10):
@@ -103,6 +113,29 @@ Organization Unit Name etc. See `init --help` for additional details.
 The default lifetime of the CA is 5 years; you can change this via
 the `-V` (`--validity`) option to "init".
 
+### Initialize a new CA by Importing from a JSON file
+If you are using any version of ovpn-tool **prior** to v0.9.x, you
+must first export the DB into a JSON file *using the v0.8.x version
+of the tool*. Assuming the DB dump is in *db.json*, then you can
+initialize a new CA instance like so:
+
+    $ ovpn-tool -v foo.db init --from-json db.json
+
+You will be prompted for the DB passphrase; this passphrase is for
+the **new** database (and NOT the old database).
+
+### Creating an intermediate CA
+Often, it's useful to have an intermediate CA for issuing server or
+client certificates. These intermediate CAs can be arbitrarily
+chained.
+
+    $ ovpn-tool -v foo.db inter client-ca
+
+Once created, this intermediate CA can be used to issue new leaf
+certificates:
+
+    $ ovpn-tool -v foo.db user -s client-ca user@example.com
+
 ### Create an OpenVPN server certificate & key pair
 An OpenVPN server needs a few things:
 * A server common name - so client can either address it by DNS Name.
@@ -173,6 +206,21 @@ To see a list of certificates in the database:
 
     $ ovpn-tool foo.db list
 
+## Revoking CAs or Leaf Certificates
+ovpn-tool enables you to revoke intermediate CAs or leaf
+certificates. To revoke a user/server cerfificate:
+
+    $ ovpn-tool foo.db del NAME
+
+where `NAME` is the common-name of the certificate you want to
+revoke. **Note** you should generate a new CRL once you revoke any
+certificate:
+
+    $ ovpn-tool foo.db crl -v 7 -o crl.pem
+
+This generates a CRL with a 7 day validity (you should regenerate
+the CRLs regularly).
+
 ### Exporting a Server Configuration
 While the tool manages certificates, what we are really after are
 OpenVPN server & client configurations for the server & client
@@ -239,9 +287,6 @@ custom configuration templates:
 * `.Port` - OpenVPN server port number provided when server
   certificate was created
 
-## TODO
-
-* Tests
 
 # Development Notes
 If you wish to hack on this, notes here might be useful.
@@ -269,9 +314,8 @@ The code is organized as a library & command line frontend for that library.
       salt. This key is protected with a Key-encryption-key (KEK) derived from
       the expanded passphrase.
     * The salt and expanded passphrase are fed into Argon2i to derive the KEK.
-    * The DB encryption key is stored on disk as XOR of the KEK; a SHA256 checksum
-      of the salt and KEK is stored alongside to verify that the user supplied
-      passphrase is valid.
+    * The DB encryption key is stored on disk as an AEAD encrypted blob (AES-256-GCM).
+      The salt and KEK is stored in the DB.
     * In pseudo code, the above looks like so:
       ```python
 
@@ -279,16 +323,12 @@ The code is organized as a library & command line frontend for that library.
           salt      = randombytes(32)
           dbkey     = randombytes(32)
           kek       = KDF(expanded, salt)
-          enc_dbkey = dbkey ^ kek
-          checksum  = SHA256(salt, kek)
+          enc_dbkey = AES-256-GCM(kek, salt)
       ```
 
-    * The KDF parameters are hardcoded in `cipher.go`;
-      it is currently `Time = 1`, `Mem = 1048576`, and `Threads = 8`.
     * Database entries are individually encrypted in AEAD (AES-256-GCM) mode.
-      The AEAD nonce size is 32 bytes (instead of the golang default of 12 bytes).
+      The AEAD nonce size is 16 bytes (instead of the golang default of 12 bytes).
     * Each AEAD encrypt instance uses a separate salt and key extracted via HKDF.
-    * The HKDF salt is hashed via SHA256 and used as the AEAD nonce.
     * The HKDF salt is used as additional data in the AEAD construction.
     * Database bucket keys are entangled with the expanded passphrase and the DB
       salt via HMAC-SHA256. We don't use any kind of AEAD here because we need a
@@ -296,15 +336,11 @@ The code is organized as a library & command line frontend for that library.
       used in *db.go*.
 
 ## Guide to Source Code
-* `pki/`: PKI abstraction - includes database storage, marshaling/unmarshaling etc.
+* The bulk of the code for PKI management is in
+  [go-pki](https://github.com/opencoff/go-pki).
 
-    - `cert.go`:   Certificate issuance & query routines
-    - `db.go`:     Cert storage in a boltdb instance
-    - `cipher.go`: DB encryption/decryption routines
-    - `str.go`:    Utility function to print a certificate in string format
+* The ovpn-tool command line code is in the `src/` directory.
+  Each command is in its own file.
 
 * `internal/utils`: Misc utilities for asking interactive password
-
-* `src/`: Command line interface to the library capabilities. Each
-  command is in its own file.
 

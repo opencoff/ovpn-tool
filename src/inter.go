@@ -12,7 +12,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/opencoff/ovpn-tool/pki"
+	"github.com/opencoff/go-pki"
 	flag "github.com/opencoff/pflag"
 )
 
@@ -25,8 +25,10 @@ func IntermediateCA(db string, args []string) {
 	}
 
 	var yrs uint = 2
+	var signer string
 
 	fs.UintVarP(&yrs, "validity", "V", 5, "Issue CA root cert with `N` years validity")
+	fs.StringVarP(&signer, "sign-with", "s", "", "Use `S` as the signing CA [root-CA]")
 
 	err := fs.Parse(args)
 	if err != nil {
@@ -39,12 +41,19 @@ func IntermediateCA(db string, args []string) {
 	}
 
 	ca := OpenCA(db)
+	if len(signer) > 0 {
+		ica, err := ca.FindCA(signer)
+		if err != nil {
+			die("can't find signer %s: %s", signer, err)
+		}
+		ca = ica
+	}
+
 	defer ca.Close()
 
 	cn := args[0]
-
 	ci := &pki.CertInfo{
-		Subject:  ca.Crt.Subject,
+		Subject:  ca.Subject,
 		Validity: years(yrs),
 	}
 
@@ -53,7 +62,7 @@ func IntermediateCA(db string, args []string) {
 	if err != nil {
 		die("%s", err)
 	}
-	Print("New intermediate CA:\n%s\n", Cert(*ica.Crt))
+	Print("New intermediate CA:\n%s\n", Cert(*ica.Certificate))
 }
 
 func intermediateCAUsage(fs *flag.FlagSet) {

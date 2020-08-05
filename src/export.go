@@ -18,7 +18,7 @@ import (
 	"text/template"
 	"time"
 
-	"github.com/opencoff/ovpn-tool/pki"
+	"github.com/opencoff/go-pki"
 	flag "github.com/opencoff/pflag"
 )
 
@@ -33,12 +33,15 @@ func ExportCert(db string, args []string) {
 	var server string
 	var templ string
 	var prUser, prSrv bool
+	var json, showCA bool
 
 	fs.StringVarP(&outfile, "outfile", "o", "", "Write the output to file `F`")
 	fs.StringVarP(&server, "server", "s", "", "Export configuration for use with server `S`")
 	fs.StringVarP(&templ, "template", "t", "", "Use openvpn config template from file `T`")
 	fs.BoolVarP(&prUser, "print-client-template", "", false, "Dump the OpenVPN client template")
 	fs.BoolVarP(&prSrv, "print-server-template", "", false, "Dump the OpenVPN server template")
+	fs.BoolVarP(&json, "json", "j", false, "Dump DB in JSON format")
+	fs.BoolVarP(&showCA, "root-ca", "", false, "Export Root-CA in PEM format")
 
 	err := fs.Parse(args)
 	if err != nil {
@@ -55,6 +58,31 @@ func ExportCert(db string, args []string) {
 			os.Stdout.WriteString(ServerTemplate)
 		}
 
+		os.Exit(0)
+	}
+
+	ca := OpenCA(db)
+	defer ca.Close()
+
+	var out io.Writer = os.Stdout
+	if len(outfile) > 0 && outfile != "-" {
+		fd := mustOpen(outfile, os.O_WRONLY|os.O_CREATE|os.O_TRUNC)
+		defer fd.Close()
+
+		out = fd
+	}
+
+	// Handle Json export first
+	if json {
+		err := ca.ExportJSON(out)
+		if err != nil {
+			die("can't dump db: %s", err)
+		}
+		os.Exit(0)
+	}
+
+	if showCA {
+		fmt.Fprintf(out, "%s\n", ca.PEM())
 		os.Exit(0)
 	}
 
@@ -76,8 +104,6 @@ func ExportCert(db string, args []string) {
 	}
 
 	cn := args[0]
-	ca := OpenCA(db)
-	defer ca.Close()
 
 	var srv *pki.Cert
 
@@ -89,14 +115,6 @@ func ExportCert(db string, args []string) {
 				die("Can't find server with name '%s': %s", server, err)
 			}
 		}
-	}
-
-	var out io.Writer = os.Stdout
-	if len(outfile) > 0 && outfile != "-" {
-		fd := mustOpen(outfile, os.O_WRONLY|os.O_CREATE|os.O_TRUNC)
-		defer fd.Close()
-
-		out = fd
 	}
 
 	x := &exported{
@@ -116,7 +134,7 @@ func ExportCert(db string, args []string) {
 		return
 	}
 
-	if c, err := ca.FindUser(cn); err == nil {
+	if c, err := ca.FindClient(cn); err == nil {
 		if len(template) == 0 {
 			template = UserTemplate
 		}
@@ -164,11 +182,16 @@ func (x *exported) exportServer(s *pki.Cert, t string, out io.Writer) {
 
 // Build the CA chain and print it
 func (x *exported) fillCA(s *pki.Cert, ca *pki.CA) {
-	caChain, err := ca.Signers(s)
+	calist, err := ca.ChainFor(s)
 	if err != nil {
-		die("can't build CA chain for %s: %s", s.Crt.Subject.CommonName, err)
+		die("can't build CA chain for %s: %s", s.Subject.CommonName, err)
 	}
-	x.Ca = string(pki.PEMEncodeChain(caChain))
+	var w strings.Builder
+	for i := range calist {
+		c := calist[i]
+		w.Write(c.PEM())
+	}
+	x.Ca = w.String()
 }
 
 func (x *exported) exportUser(c *pki.Cert, srv *pki.Cert, t string, out io.Writer) {
@@ -191,14 +214,14 @@ func (x *exported) fill(s *pki.Cert, c *pki.Cert) {
 			die("%s", err)
 		}
 
-		x.ServerCommonName = s.Crt.Subject.CommonName
-		if len(s.Crt.IPAddresses) > 0 {
-			x.IP = s.Crt.IPAddresses[0].String()
+		x.ServerCommonName = s.Subject.CommonName
+		if len(s.IPAddresses) > 0 {
+			x.IP = s.IPAddresses[0].String()
 		}
 
 		// We only use the first name in the DNSNames list - if it is present.
-		if len(s.Crt.DNSNames) > 0 {
-			x.Host = s.Crt.DNSNames[0]
+		if len(s.DNSNames) > 0 {
+			x.Host = s.DNSNames[0]
 		} else {
 			// Punt and use the IP address.
 			// This way, the client template can refer to .Host to
@@ -221,7 +244,7 @@ func (x *exported) fill(s *pki.Cert, c *pki.Cert) {
 	crt, key := c.PEM()
 	x.Cert = string(crt)
 	x.Key = string(key)
-	x.CommonName = c.Crt.Subject.CommonName
+	x.CommonName = c.Subject.CommonName
 }
 
 func mustOpen(fn string, flag int) *os.File {

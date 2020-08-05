@@ -13,8 +13,8 @@ import (
 	"os"
 	"strings"
 
+	"github.com/opencoff/go-pki"
 	"github.com/opencoff/ovpn-tool/internal/utils"
-	"github.com/opencoff/ovpn-tool/pki"
 	flag "github.com/opencoff/pflag"
 )
 
@@ -66,12 +66,7 @@ func UserCert(db string, args []string) {
 
 	ca := OpenCA(db)
 	if len(signer) > 0 {
-		ici := &pki.CertInfo{
-			Subject: ca.Crt.Subject,
-		}
-
-		ici.Subject.CommonName = signer
-		ica, err := ca.NewIntermediateCA(ici)
+		ica, err := ca.FindCA(signer)
 		if err != nil {
 			die("can't find signer %s: %s", signer, err)
 		}
@@ -80,7 +75,7 @@ func UserCert(db string, args []string) {
 	defer ca.Close()
 
 	ci := &pki.CertInfo{
-		Subject:        ca.Crt.Subject,
+		Subject:        ca.Subject,
 		Validity:       years(yrs),
 		EmailAddresses: []string{email},
 	}
@@ -91,7 +86,7 @@ func UserCert(db string, args []string) {
 		die("can't create user cert: %s", err)
 	}
 
-	Print("New client cert:\n%s\n", Cert(*crt.Crt))
+	Print("New client cert:\n%s\n", Cert(*crt.Certificate))
 }
 
 func userUsage(fs *flag.FlagSet) {

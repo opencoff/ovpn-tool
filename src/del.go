@@ -15,7 +15,7 @@ import (
 	flag "github.com/opencoff/pflag"
 )
 
-func DelUser(db string, args []string) {
+func Delete(db string, args []string) {
 	fs := flag.NewFlagSet("delete", flag.ExitOnError)
 	fs.Usage = func() {
 		delUsage(fs)
@@ -36,28 +36,42 @@ func DelUser(db string, args []string) {
 	defer ca.Close()
 
 	gone := 0
-
 	for _, cn := range args {
-		err := ca.DeleteUser(cn)
+		ck, err := ca.Find(cn)
 		if err != nil {
-			warn("%s\n")
+			warn("%s\n", err)
+			continue
+		}
+
+		switch {
+		case ck.IsServer:
+			err = ca.RevokeServer(cn)
+		case ck.IsCA:
+			err = ca.RevokeCA(cn)
+		default:
+			err = ca.RevokeClient(cn)
+		}
+
+		if err != nil {
+			warn("%s\n", err)
 		} else {
 			gone++
-			Print("Deleted user %s ..\n", cn)
+			Print("Deleted %s ..\n", cn)
 		}
 	}
 
 	if gone > 0 {
 		fmt.Printf("Don't forget to generate a new CRL (%s %s crl)\n", os.Args[0], db)
 	}
+
 }
 
 func delUsage(fs *flag.FlagSet) {
-	fmt.Printf(`%s delete: Delete one or more users ..
+	fmt.Printf(`%s delete: Delete one or more users/servers/intermediate-CAs ..
 
 Usage: %s DB delete [options] CN [CN...]
 
-Where 'DB' is the CA Database file name and 'CN' is one or more user names to delete.
+Where 'DB' is the CA Database file name and 'CN' is one or more names to delete.
 
 Options:
 `, os.Args[0], os.Args[0])

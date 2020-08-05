@@ -12,26 +12,60 @@ package main
 
 import (
 	"fmt"
+	"net"
 	"strings"
 
 	"github.com/opencoff/pflag"
 )
 
 var (
+	_ pflag.Value = &IPList{}
 	_ pflag.Value = &StringList{}
 )
 
-type StringList struct {
-	V []string
+type IPList []net.IP
+
+func newIPList() *IPList {
+	return &IPList{}
+}
+
+func (ipl *IPList) Set(s string) error {
+	v := strings.Split(s, ",")
+	ips := make([]net.IP, 0, 4)
+	for _, x := range v {
+		ip := net.ParseIP(x)
+		if ip == nil {
+			return fmt.Errorf("can't parse IP Address '%s'", s)
+		}
+		ips = append(ips, ip)
+	}
+
+	*ipl = append(*ipl, ips...)
+	return nil
+}
+
+func (ipl *IPList) String() string {
+	var x []string
+	ips := []net.IP(*ipl)
+
+	for i := range ips {
+		x = append(x, ips[i].String())
+	}
+	return fmt.Sprintf("[%s]", strings.Join(x, ","))
+}
+
+type StringList []string
+
+func newStringList() *StringList {
+	return &StringList{}
 }
 
 func (i *StringList) Set(s string) error {
 	v := strings.Split(s, ",")
-	i.V = append(i.V, v...)
+	*i = append(*i, v...)
 	return nil
 }
 
 func (i *StringList) String() string {
-	z := strings.Join(i.V, ",")
-	return fmt.Sprintf("[%s]", z)
+	return fmt.Sprintf("[%s]", strings.Join([]string(*i), ","))
 }
