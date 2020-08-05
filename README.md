@@ -166,7 +166,7 @@ server name this client will connect to. See example below.
 
 ### Create an OpenVPN client (user) certificate & key pair
 An OpenVPN client certificate is quite simple - it just needs a
-common name. For convenience, you may use the email address as the 
+common name. For convenience, you may use the email address as the
 common Name.
 
     $ ovpn-tool -v foo.db client user@domain.name
@@ -249,7 +249,7 @@ template back to the export command:
     $ ovpn-tool foo.db export --print-server-template > s.template
     $ vi s.template
     $ ovpn-tool foo.db export -t s.template -o s.conf server.domain.name
-  
+
 ### Exporting a Client Configuration
 Client configuration is typically associated with one OpenVPN
 server. However, this is optional and you can take an unassociated

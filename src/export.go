@@ -89,6 +89,7 @@ func ExportCert(db string, args []string) {
 	if len(args) == 0 {
 		fs.Usage()
 	}
+	cn := args[0]
 
 	// 1. We prefer to use a user supplied template if provided
 	// 2. Else, we use an internal/hardcoded template
@@ -103,10 +104,7 @@ func ExportCert(db string, args []string) {
 		template = string(buf)
 	}
 
-	cn := args[0]
-
 	var srv *pki.Cert
-
 	if len(server) > 0 {
 		// we ignore the unusual case exporting server config for use itself
 		if server != cn {
@@ -116,7 +114,6 @@ func ExportCert(db string, args []string) {
 			}
 		}
 	}
-
 	x := &exported{
 		Date: time.Now().UTC().Format(time.RFC1123Z),
 		Tool: toolInfo(),
