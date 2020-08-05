@@ -153,6 +153,7 @@ done
 Tool=
 doinit=0
 args=
+Printarch=0
 
 #set -x
 ac_prev=
@@ -214,6 +215,10 @@ do
             set -x
             ;;
 
+        --print-arch)
+            Printarch=1
+            ;;
+
         *) # first non option terminates option processing.
            # we gather all remaining args and bundle them up.
             args="$args $ac_option"
@@ -273,6 +278,12 @@ else
         msg="statically linked"
     fi
 fi
+
+if [ $Printarch -gt 0 ]; then
+    echo "$hostos-$hostcpu"
+    exit 0
+fi
+
 
 # This is where build outputs go
 Bindir=$PWD/bin/$cross
