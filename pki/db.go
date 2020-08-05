@@ -360,7 +360,8 @@ func keyPEM(key *ecdsa.PrivateKey, pw []byte) ([]byte, error) {
 
 	var blk *pem.Block
 	if len(pw) > 0 {
-		blk, err = x509.EncryptPEMBlock(rand.Reader, "EC PRIVATE KEY", derkey, pw, x509.PEMCipherAES256)
+		pwd := fmt.Sprintf("%x", pw)
+		blk, err = x509.EncryptPEMBlock(rand.Reader, "EC PRIVATE KEY", derkey, []byte(pwd), x509.PEMCipherAES256)
 		if err != nil {
 			return nil, err
 		}
