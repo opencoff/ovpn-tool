@@ -12,9 +12,9 @@ such as openssl. It is a replacement for and an enhancement to easy-rsa
   See the section on importing below.
 
 ## Features
-* Uses a single [boltdb](https://github.com/etcd/bbolt) instance to store the
+* Uses a single [boltdb](https://github.com/etcd-io/bbolt) instance to store the
   certificates and keys.
-* All data strored in the database is encrypted with keys derived from a user
+* All data stored in the database is encrypted with keys derived from a user
   supplied CA passphrase.
 * Support for arbitrary chain of intermediate CAs
 * The certificates and keys are opinionated:
@@ -152,7 +152,7 @@ Of course, you should use the appropriate values for `IP.ADDR.ES`
 and `server.domain.name` for your setup.
 
 The IP Address and Server FQDN show up in the certificate as
-Certificate.IPAddress and Certificate.Sibject.CommonName.
+Certificate.IPAddress and Certificate.Subject.CommonName.
 Additionally, the server FQDN also shows up in Certificate.DNSNames.
 
 You can also set a custom OpenVPN port for this server via the `-p`
