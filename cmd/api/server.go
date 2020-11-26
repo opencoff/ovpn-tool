@@ -36,6 +36,7 @@ func (svr *server) setupRoutes(r gin.IRouter) {
 	r.GET("/client/:cn/config", svr.GetClientConf)
 	r.POST("/client/:cn", svr.CreateClient)
 	r.DELETE("/client/:cn", svr.DeleteClient)
+	r.PUT("/crl", svr.RegenCRL)
 }
 
 func (svr *server) ListClients(c *gin.Context) {
@@ -110,6 +111,23 @@ func (svr *server) GetClient(c *gin.Context) {
 		"fingerprint": fingerprint,
 		"valid_until": validUntil,
 	})
+}
+
+func (svr *server) RegenCRL(c *gin.Context) {
+	validity := strconv.Itoa(svr.CRLValidity)
+	if v := c.Query("validity"); v != "" {
+		if _, err := strconv.Atoi(v); err != nil {
+			c.AbortWithError(400, err)
+			return
+		}
+		validity = v
+	}
+	cmd := svr.buildCmd("crl", "-o", svr.serverCRLPath, "-V", validity)
+	if err := cmd.Run(); err != nil {
+		c.AbortWithError(500, err)
+		return
+	}
+	c.Status(204)
 }
 
 func (svr *server) GetIPList(c *gin.Context) {
