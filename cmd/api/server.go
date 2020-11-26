@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"os/exec"
+	"strconv"
 	"strings"
 
 	"github.com/gin-gonic/gin"
@@ -17,6 +18,7 @@ type server struct {
 	serverCRLPath string // the path to the CRL file used by the openvpn process
 	pwFile        string
 	ccd           CCD
+	CRLValidity   int
 }
 
 func (svr *server) buildCmd(args ...string) *exec.Cmd {
@@ -178,7 +180,7 @@ func (svr *server) DeleteClient(c *gin.Context) {
 	}
 
 	// regen CRL
-	cmd = svr.buildCmd("crl", "-o", svr.serverCRLPath)
+	cmd = svr.buildCmd("crl", "-o", svr.serverCRLPath, "-V", strconv.Itoa(svr.CRLValidity))
 	if err := cmd.Run(); err != nil {
 		c.AbortWithError(500, err)
 		return

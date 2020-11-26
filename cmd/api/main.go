@@ -9,8 +9,11 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+var defaultCRLValidity = 3650
+
 func main() {
 	var db, addr, dn, toolPath, serverCRL, ccdPath, serverIP, vpnSubnet, pwFile string
+	var crlValidity int
 
 	toolPath, _ = exec.LookPath("ovpn-tool") // try to populate the default if we can
 
@@ -22,6 +25,7 @@ func main() {
 	flag.StringVar(&serverIP, "gw", "10.43.0.1", "IP of the VPN Gateway")
 	flag.StringVar(&ccdPath, "ccd", "/etc/openvpn/ccd", "domain name of the VPN server to create clients against")
 	flag.StringVar(&serverCRL, "crl", "/etc/openvpn/crl.pem", "path to the CRL file used by the openvpn server")
+	flag.IntVar(&crlValidity, "crlv", defaultCRLValidity, "how long in days the CRL should be valid for")
 	flag.StringVar(&pwFile, "pw", "pw.secret", "path to the file containing the database password")
 	flag.Parse()
 
@@ -50,7 +54,7 @@ func main() {
 	}
 
 	ccd := CCD{ccdPath, vpnSubnet, serverIP}
-	svr := &server{toolPath, db, dn, serverCRL, pwFile, ccd}
+	svr := &server{toolPath, db, dn, serverCRL, pwFile, ccd, crlValidity}
 
 	api := gin.Default()
 	svr.setupRoutes(api)
