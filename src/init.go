@@ -16,7 +16,7 @@ import (
 	"time"
 
 	"github.com/opencoff/ovpn-tool/internal/utils"
-	"github.com/opencoff/ovpn-tool/pki"
+	"github.com/opencoff/go-pki"
 	flag "github.com/opencoff/pflag"
 )
 
