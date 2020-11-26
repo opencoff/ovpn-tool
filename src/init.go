@@ -20,12 +20,17 @@ import (
 	flag "github.com/opencoff/pflag"
 )
 
-// Open an existing CA or fail
+// OpenCA will open an existing CA or fail
 func OpenCA(db string) *pki.CA {
+	pw, usingPwFile := pwFromPasswdFile()
+
 	// we only ask _once_
-	pw, err := utils.Askpass("Enter password for DB", false)
-	if err != nil {
-		die("%s", err)
+	if !usingPwFile {
+		var err error
+		pw, err = utils.Askpass("Enter password for DB", false)
+		if err != nil {
+			die("%s", err)
+		}
 	}
 
 	p := pki.Config{
@@ -138,4 +143,18 @@ Options:
 func years(n uint) time.Duration {
 	day := 24 * time.Hour
 	return (6 * time.Hour) + (time.Duration(n*365) * day)
+}
+
+func pwFromPasswdFile() (string, bool) {
+	f := os.Getenv("PASSWD_FILE")
+	if f == "" {
+		return "", false
+	}
+
+	data, err := ioutil.ReadFile(f)
+	if err != nil {
+		die("%s", err)
+	}
+
+	return string(data), true
 }
