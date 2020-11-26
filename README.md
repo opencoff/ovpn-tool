@@ -113,6 +113,15 @@ Organization Unit Name etc. See `init --help` for additional details.
 The default lifetime of the CA is 5 years; you can change this via
 the `-V` (`--validity`) option to "init".
 
+From here you can specify the password every time your run the command or
+if you're using some automation scripts specify it via a file:
+
+```
+echo -n "mypass" > pw.txt
+export PASSWD_FILE=pw.txt
+ovpn-tool foo.db list
+```
+
 ### Initialize a new CA by Importing from a JSON file
 If you are using any version of ovpn-tool **prior** to v0.9.x, you
 must first export the DB into a JSON file *using the v0.8.x version
