@@ -15,31 +15,24 @@ import (
 	"os"
 	"time"
 
-	"github.com/opencoff/go-pki"
 	"github.com/opencoff/ovpn-tool/internal/utils"
+	"github.com/opencoff/ovpn-tool/pki"
 	flag "github.com/opencoff/pflag"
 )
 
-// Open an existing CA or fail
-func OpenCA(db string) *pki.CA {
-	// we only ask _once_
-	pw, err := utils.Askpass("Enter password for DB", false)
-	if err != nil {
-		die("%s", err)
-	}
-
-	p := pki.Config{
-		Passwd: pw,
-	}
-	ca, err := pki.New(&p, db, false)
-	if err != nil {
-		die("%s", err)
-	}
-	return ca
+// Initialize a new CA or an existing CA
+func InitCmd(db string, args []string) {
+	ca := initCA(db, args, true)
+	ca.Close()
 }
 
-// initialize a CA in 'dbfile' or import from json
-func InitCmd(dbfile string, args []string) {
+// Open an existing CA or fail
+func OpenCA(db string) *pki.CA {
+	return initCA(db, []string{}, false)
+}
+
+// initialize a CA in 'dbfile' or read an already initialized CA
+func initCA(dbfile string, args []string, init bool) *pki.CA {
 	fs := flag.NewFlagSet("init", flag.ExitOnError)
 	fs.Usage = func() {
 		initUsage(fs)
@@ -47,72 +40,72 @@ func InitCmd(dbfile string, args []string) {
 
 	var country, org, ou string
 	var yrs uint
-	var from string
 
 	fs.StringVarP(&country, "country", "c", "US", "Use `C` as the country name")
 	fs.StringVarP(&org, "organization", "O", "", "Use `O` as the organization name")
 	fs.StringVarP(&ou, "organization-unit", "u", "", "Use `U` as the organization unit name")
 	fs.UintVarP(&yrs, "validity", "V", 5, "Issue CA root cert with `N` years validity")
-	fs.StringVarP(&from, "from-json", "j", "", "Initialize from an exported JSON dump")
-
 	err := fs.Parse(args)
 	if err != nil {
 		die("%s", err)
 	}
 
 	var cn string
+	var creat bool
 	var pw string
 
 	args = fs.Args()
-	if len(args) > 0 || len(from) > 0 {
-		pw, err = utils.Askpass("Enter password for DB", true)
+	if !init && os.Getenv("PASSWD_FILE") != "" {
+		data, err := ioutil.ReadFile(os.Getenv("PASSWD_FILE"))
 		if err != nil {
 			die("%s", err)
 		}
+		pw = string(data)
 	} else {
-		fs.Usage()
-		os.Exit(1)
+		if len(args) > 0 {
+			cn = args[0]
+			creat = true
+
+			pw, err = utils.Askpass("Enter password for DB", true)
+			if err != nil {
+				die("%s", err)
+			}
+		} else {
+			if init {
+				fs.Usage()
+				os.Exit(1)
+			}
+
+			// we only ask _once_
+			pw, err = utils.Askpass("Enter password for DB", false)
+			if err != nil {
+				die("%s", err)
+			}
+		}
 	}
 
-	var ca *pki.CA
-	if len(from) > 0 {
-		js, err := ioutil.ReadFile(from)
-		if err != nil {
-			die("can't read json: %s", err)
-		}
+	p := pki.CAparams{
+		Subject: pkix.Name{
+			Country:            []string{country},
+			Organization:       []string{org},
+			OrganizationalUnit: []string{ou},
+			CommonName:         cn,
+		},
 
-		cfg := &pki.Config{
-			Passwd: pw,
-		}
-		ca, err = pki.NewFromJSON(cfg, dbfile, string(js))
-		if err != nil {
-			die("%s", err)
-		}
-	} else if len(args) > 0 {
-		var err error
-
-		cn = args[0]
-		p := pki.Config{
-			Passwd:   pw,
-			Validity: years(yrs),
-
-			Subject: pkix.Name{
-				Country:            []string{country},
-				Organization:       []string{org},
-				OrganizationalUnit: []string{ou},
-				CommonName:         cn,
-			},
-		}
-		ca, err = pki.New(&p, dbfile, true)
-		if err != nil {
-			die("%s", err)
-		}
-	} else {
-		fs.Usage()
-		os.Exit(1)
+		Passwd:          pw,
+		CreateIfMissing: creat,
+		Validity:        years(yrs),
+		DBfile:          dbfile,
 	}
 
-	Print("New CA cert:\n%s\n", Cert(*ca.Certificate))
+	ca, err := pki.NewCA(&p)
+	if err != nil {
+		die("%s", err)
+	}
+
+	Print("New CA cert:\n%s\n", Cert(*ca.Crt))
+
+	return ca
 }
 
 func initUsage(fs *flag.FlagSet) {
