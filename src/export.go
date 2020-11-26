@@ -414,11 +414,12 @@ script-security 2
 tls-cipher TLS-ECDHE-ECDSA-WITH-AES-256-GCM-SHA384:TLS-ECDHE-ECDSA-WITH-AES-128-GCM-SHA256
 cipher AES-256-GCM
 auth-nocache
-remote-cert-tls server
+# when a ECDSA key is used then "keyAgreement" flag is needed for being ECDH "capable" (as opposed to ephemeral ECDHE)
+remote-cert-ku a8 a0 80 88
 tls-version-min 1.2
 
 # Verify the remote server's common name
-verify-x509-name "{{ .ServerCommonName }}"
+verify-x509-name "{{ .ServerCommonName }}" name
 
 # Inline certs, keys and tls-crypt follows
 <ca>
