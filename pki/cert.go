@@ -392,6 +392,19 @@ func (ca *CA) newCert(ci *CertInfo, isServer bool, pw string) (*Cert, error) {
 	var extKeyUsage x509.ExtKeyUsage
 	var ipaddrs []net.IP
 
+	// --remote-cert-tls client|server
+	//       Require that peer certificate was signed with an explicit key usage and extended key usage based on RFC3280 TLS rules.
+	//       This is a useful security option for clients, to ensure that the host they connect to is a designated server.
+	//
+	//       The --remote-cert-tls client option is equivalent to --remote-cert-ku 80 08 88 --remote-cert-eku "TLS Web Client Authentication"
+	//       The key usage is digitalSignature and/or keyAgreement.
+	//
+	//       The --remote-cert-tls server option is equivalent to --remote-cert-ku a0 88 --remote-cert-eku "TLS Web Server Authentication"
+	//       The key usage is digitalSignature and ( keyEncipherment or keyAgreement ).
+	//
+	//       This  is  an  important  security  precaution  to protect against a man-in-the-middle attack where an authorized client attempts to connect to another client by impersonating the server.  The
+	//       attack is easily prevented by having clients verify the server certificate using any one of --remote-cert-tls, --verify-x509-name, or --tls-verify.
+
 	if isServer {
 		// nsCert = Client
 		val, err = asn1.Marshal(asn1.BitString{Bytes: []byte{0x40}, BitLength: 2})
