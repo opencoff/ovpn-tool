@@ -16,6 +16,9 @@ such as openssl. It is a replacement for and an enhancement to easy-rsa
   certificates and keys.
 * All data stored in the database is encrypted with keys derived from a user
   supplied CA passphrase.
+* To support automation, the master password can be supplied via a
+  user defined environment variable. All commands support
+  `--env-password=E` option to support this feature.
 * Support for arbitrary chain of intermediate CAs
 * The certificates and keys are opinionated:
    * Secp521r1 used for CA certificates
@@ -33,10 +36,10 @@ such as openssl. It is a replacement for and an enhancement to easy-rsa
    * Uses "tun" mode
    * Server pushes its tunnel address as the default gateway for all
      client traffic
-   * Server pushes its tunnel address as the DNS address so that all
+   * Server pushes its tunnel address as the DNS server so that all
      DNS lookups on the client can be handled inside the tunnel. The
-     server will need additional software such as unbound to provide
-     DNS server functionality.
+     server will need additional software such as `unbound` to provide
+     DNS server/cache functionality.
    * The Client and Server configurations uses the `tls-crypt` option
      to ensure that the server is protected with an additional layer
      of encryption to thwart DoS attacks.
@@ -112,6 +115,15 @@ Organization Unit Name etc. See `init --help` for additional details.
 
 The default lifetime of the CA is 5 years; you can change this via
 the `-V` (`--validity`) option to "init".
+
+One can also use a user defined environment variable to provide the
+database master password:
+
+    $ abcdef=myDBPassword45879 ovpn-tool -v foo.db init -E abcdef my-CA
+
+The example invocation above uses the DB password from the
+environment variable `abcdef` to find the passphrase
+`myDBPassword45879`.
 
 ### Initialize a new CA by Importing from a JSON file
 If you are using any version of ovpn-tool **prior** to v0.9.x, you
@@ -270,6 +282,16 @@ If you desire to change the DB passphrase, you can do so with the
 
 This merely changes the way the encrypted DB key is stored on disk.
 
+This command also supports getting the old and new passphrases via
+user defined environment variables. e.g.,:
+
+    $ oldpw=myDBPassword45879 newpw=newDBPwd112233 ovpn-tool foo.db \
+        passwd -E oldpw -N newpw
+
+This mode of getting the password from the environment is highly
+discouraged - as it can leave traces in the user's shell history.
+Use with care!
+
 ## Template variables available for customization
 The following template parameters are available for use in your
 custom configuration templates:
@@ -287,6 +309,15 @@ custom configuration templates:
 * `.Port` - OpenVPN server port number provided when server
   certificate was created
 
+## Getting the DB Password from the Environment
+All command support the option to get the password from the
+environment variable of user's choice. This capability is helpful to
+automate certain operations - but is **NOT recommended** from a good
+security practice perspective.
+
+If you do choose to use this feature, please remember to turn-off
+shell history otherwise your history will hold a permanent record of
+your DB password.
 
 # Development Notes
 If you wish to hack on this, notes here might be useful.
@@ -299,11 +330,14 @@ The code is organized as a library & command line frontend for that library.
   library can be used by external callers. e.g., see
   https://github.com/opencoff/certik
 
-
-* The build script `build` is a shell script to build the program.
+* The script `build` is a shell script to build the program.
   It does two very important things:
     * Puts the binary in an OS+Arch specific directory
     * Injects a git version-tag into the final binary ("linker resolved symbol")
+
+  Additionally, it makes cross compilation and static builds
+  possible (for supported platforms). Try `./build --help` for more
+  details.
 
 * The OpenVPN server & client configuration templates are in `src/export.go`.
   It uses golang's `text/template` syntax.

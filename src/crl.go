@@ -23,19 +23,20 @@ func ListCRL(db string, args []string) {
 	}
 
 	var list bool
-	var outfile string
+	var outfile, envpw string
 	var crlvalid int
 
 	fs.BoolVarP(&list, "list", "l", false, "List revoked certificates")
 	fs.StringVarP(&outfile, "outfile", "o", "", "Write the CRL  to `F`")
 	fs.IntVarP(&crlvalid, "validity", "V", 1, "Make the CRL valid for `N` days")
+	fs.StringVarP(&envpw, "env-password", "E", "", "Use password from environment var `E`")
 
 	err := fs.Parse(args)
 	if err != nil {
 		die("%s", err)
 	}
 
-	ca := OpenCA(db)
+	ca := OpenCA(db, envpw)
 	defer ca.Close()
 
 	var out io.Writer = os.Stdout

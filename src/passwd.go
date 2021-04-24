@@ -23,7 +23,10 @@ func ChangePasswd(dbfile string, args []string) {
 	fs.Usage = func() {
 		passwdUsage(fs)
 	}
+	var envold, envnew string
 
+	fs.StringVarP(&envold, "env-password-old", "E", "", "Use old password from environment var `E`")
+	fs.StringVarP(&envnew, "env-password-new", "N", "", "Use new password from environment var `N`")
 	err := fs.Parse(args)
 	if err != nil {
 		die("%s", err)
@@ -32,9 +35,22 @@ func ChangePasswd(dbfile string, args []string) {
 	var oldpw string
 	var newpw string
 
-	oldpw, err = utils.Askpass("Enter old password for DB", false)
-	if err != nil {
-		die("%s", err)
+	if len(envold) > 0 {
+		oldpw = os.Getenv(envold)
+	} else {
+		oldpw, err = utils.Askpass("Enter old password for DB", false)
+		if err != nil {
+			die("%s", err)
+		}
+	}
+
+	if len(envnew) > 0 {
+		newpw = os.Getenv(envnew)
+	} else {
+		newpw, err = utils.Askpass("Enter new password for DB", true)
+		if err != nil {
+			die("%s", err)
+		}
 	}
 
 	p := pki.Config{
@@ -47,11 +63,6 @@ func ChangePasswd(dbfile string, args []string) {
 	}
 
 	defer ca.Close()
-
-	newpw, err = utils.Askpass("Enter new password for DB", true)
-	if err != nil {
-		die("%s", err)
-	}
 
 	err = ca.Rekey(newpw)
 	if err != nil {

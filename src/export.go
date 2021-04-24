@@ -30,7 +30,7 @@ func ExportCert(db string, args []string) {
 	}
 
 	var outfile string
-	var server string
+	var server, envpw string
 	var templ string
 	var prUser, prSrv bool
 	var json, showCA bool
@@ -42,6 +42,7 @@ func ExportCert(db string, args []string) {
 	fs.BoolVarP(&prSrv, "print-server-template", "", false, "Dump the OpenVPN server template")
 	fs.BoolVarP(&json, "json", "j", false, "Dump DB in JSON format")
 	fs.BoolVarP(&showCA, "root-ca", "", false, "Export Root-CA in PEM format")
+	fs.StringVarP(&envpw, "env-password", "E", "", "Use password from environment var `E`")
 
 	err := fs.Parse(args)
 	if err != nil {
@@ -61,7 +62,7 @@ func ExportCert(db string, args []string) {
 		os.Exit(0)
 	}
 
-	ca := OpenCA(db)
+	ca := OpenCA(db, envpw)
 	defer ca.Close()
 
 	var out io.Writer = os.Stdout

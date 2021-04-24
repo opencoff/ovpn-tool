@@ -21,11 +21,18 @@ import (
 )
 
 // Open an existing CA or fail
-func OpenCA(db string) *pki.CA {
-	// we only ask _once_
-	pw, err := utils.Askpass("Enter password for DB", false)
-	if err != nil {
-		die("%s", err)
+func OpenCA(db string, envpw string) *pki.CA {
+	var pw string
+	var err error
+
+	if len(envpw) > 0 {
+		pw = os.Getenv(envpw)
+	} else {
+		// we only ask _once_
+		pw, err = utils.Askpass("Enter password for DB", false)
+		if err != nil {
+			die("%s", err)
+		}
 	}
 
 	p := pki.Config{
@@ -48,11 +55,13 @@ func InitCmd(dbfile string, args []string) {
 	var country, org, ou string
 	var yrs uint
 	var from string
+	var envpw string
 
 	fs.StringVarP(&country, "country", "c", "US", "Use `C` as the country name")
 	fs.StringVarP(&org, "organization", "O", "", "Use `O` as the organization name")
 	fs.StringVarP(&ou, "organization-unit", "u", "", "Use `U` as the organization unit name")
 	fs.UintVarP(&yrs, "validity", "V", 5, "Issue CA root cert with `N` years validity")
+	fs.StringVarP(&envpw, "env-password", "E", "", "Use password from environment var `E`")
 	fs.StringVarP(&from, "from-json", "j", "", "Initialize from an exported JSON dump")
 
 	err := fs.Parse(args)
@@ -64,14 +73,18 @@ func InitCmd(dbfile string, args []string) {
 	var pw string
 
 	args = fs.Args()
-	if len(args) > 0 || len(from) > 0 {
+	if len(args) == 0 && len(from) == 0 {
+		fs.Usage()
+		os.Exit(1)
+	}
+
+	if len(envpw) > 0 {
+		pw = os.Getenv(envpw)
+	} else {
 		pw, err = utils.Askpass("Enter password for DB", true)
 		if err != nil {
 			die("%s", err)
 		}
-	} else {
-		fs.Usage()
-		os.Exit(1)
 	}
 
 	var ca *pki.CA

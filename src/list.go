@@ -24,15 +24,17 @@ func ListCert(db string, args []string) {
 	}
 
 	var showCA bool
+	var envpw string
 
 	fs.BoolVarP(&showCA, "ca", "", false, "Display the CA certificate")
+	fs.StringVarP(&envpw, "env-password", "E", "", "Use password from environment var `E`")
 
 	err := fs.Parse(args)
 	if err != nil {
 		die("%s", err)
 	}
 
-	ca := OpenCA(db)
+	ca := OpenCA(db, envpw)
 	defer ca.Close()
 
 	if showCA {
