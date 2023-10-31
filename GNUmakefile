@@ -9,7 +9,7 @@ bin = $(bindir)/ovpn-tool
 
 all: $(bin)
 
-$(bin): $(wildcard ./src/*.go)
+$(bin): $(wildcard ./src/*.go) go.mod go.sum
 	./build -s
 
 install: $(bin) $(tooldir)

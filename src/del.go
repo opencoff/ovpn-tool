@@ -9,9 +9,11 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"os"
 
+	"github.com/opencoff/go-pki"
 	flag "github.com/opencoff/pflag"
 )
 
@@ -43,8 +45,10 @@ func Delete(db string, args []string) {
 	for _, cn := range args {
 		ck, err := ca.Find(cn)
 		if err != nil {
-			warn("%s\n", err)
-			continue
+			if !errors.Is(err, pki.ErrExpired) {
+				warn("%s: %s\n", cn, err)
+				continue
+			}
 		}
 
 		switch {
